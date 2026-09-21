@@ -1,7 +1,8 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
-import { HttpError } from './http/errors.js';
+import { HttpError, isMalformedJsonError } from './http/errors.js';
 import { productRouter } from './products/product.routes.js';
+import { promotionRouter } from './promotions/promotion.routes.js';
 import { healthRouter } from './routes/health.js';
 
 export function createApp(): Express {
@@ -11,6 +12,7 @@ export function createApp(): Express {
   app.use(express.json({ limit: '100kb' }));
   app.use(healthRouter);
   app.use(productRouter);
+  app.use(promotionRouter);
 
   app.use((_req, res) => {
     res.status(404).json({
@@ -23,6 +25,17 @@ export function createApp(): Express {
   });
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    if (isMalformedJsonError(err)) {
+      res.status(400).json({
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid request parameters',
+          details: [{ field: 'body', message: 'Must contain valid JSON' }],
+        },
+      });
+      return;
+    }
+
     if (err instanceof HttpError) {
       res.status(err.status).json({
         error: {

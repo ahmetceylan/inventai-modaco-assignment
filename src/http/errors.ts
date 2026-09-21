@@ -17,3 +17,9 @@ export class HttpError extends Error {
 export function validationError(details: ErrorDetail[]): HttpError {
   return new HttpError(400, 'VALIDATION_ERROR', 'Invalid request parameters', details);
 }
+
+export function isMalformedJsonError(error: unknown): boolean {
+  return (
+    error instanceof SyntaxError && 'status' in error && error.status === 400 && 'body' in error
+  );
+}
