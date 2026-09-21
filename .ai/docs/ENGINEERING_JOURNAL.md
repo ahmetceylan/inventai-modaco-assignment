@@ -71,3 +71,32 @@ Check/exclusion constraints and XOR assignment rules are deferred. `DATABASE_URL
 ### Validation
 
 `prisma format`, `prisma validate`, `prisma generate`, `npm run lint`, `npx tsc --noEmit`, `npm test`, and `npm run build` succeed.
+
+---
+
+## 2026-09-21 — Catalog and promotion CHECK constraints
+
+### Problem
+
+Product and promotion rows could persist invalid prices, stock, dates, discount values, or dual targets.
+
+### Root Cause
+
+The initial Prisma migration created tables and foreign keys only. Prisma schema cannot express these CHECK constraints.
+
+### Impact
+
+Application-only validation would not stop concurrent writes, ingestion, or other clients from storing invalid catalog data.
+
+### Solution
+
+Added a new SQL migration with PostgreSQL CHECK constraints for non-negative price/stock, `startAt < endAt`, percentage/fixed value ranges, and exclusive product/category targeting. Unassigned promotions remain allowed. Added focused Prisma Client integration tests. Did not edit the initial migration.
+
+### Trade-offs
+
+Constraints are invisible in `schema.prisma`. Overlap/exclusion constraints remain deferred. Tests require a migrated local PostgreSQL database.
+
+### Validation
+
+`prisma migrate deploy` applied both migrations. 13 constraint tests and the existing health test pass, along with lint, `tsc --noEmit`, and build.
+

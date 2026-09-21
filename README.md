@@ -27,6 +27,15 @@ cp .env.example .env
 | `npm run prisma:migrate`        | Create and apply a local migration |
 | `npm run prisma:migrate:deploy` | Apply migrations without prompting |
 
+Database constraint tests need a migrated local PostgreSQL database:
+
+```bash
+cp .env.example .env
+npm run prisma:generate
+npm run prisma:migrate:deploy
+npm test
+```
+
 ## Health check
 
 ```bash
