@@ -15,14 +15,17 @@ cp .env.example .env
 
 ## Scripts
 
-| Script           | Purpose                       |
-| ---------------- | ----------------------------- |
-| `npm run dev`    | Start the API with hot reload |
-| `npm run build`  | Compile TypeScript to `dist/` |
-| `npm start`      | Run the compiled API          |
-| `npm run lint`   | Lint the project              |
-| `npm run format` | Format files with Prettier    |
-| `npm test`       | Run the test suite            |
+| Script                          | Purpose                            |
+| ------------------------------- | ---------------------------------- |
+| `npm run dev`                   | Start the API with hot reload      |
+| `npm run build`                 | Compile TypeScript to `dist/`      |
+| `npm start`                     | Run the compiled API               |
+| `npm run lint`                  | Lint the project                   |
+| `npm run format`                | Format files with Prettier         |
+| `npm test`                      | Run the test suite                 |
+| `npm run prisma:generate`       | Generate Prisma Client             |
+| `npm run prisma:migrate`        | Create and apply a local migration |
+| `npm run prisma:migrate:deploy` | Apply migrations without prompting |
 
 ## Health check
 
