@@ -1,4 +1,4 @@
-import { type ProductRecord } from './product.service.js';
+import { type PricedProductRecord } from './product.service.js';
 
 export interface ProductResponse {
   id: string;
@@ -15,15 +15,13 @@ export interface ProductResponse {
   updatedAt: string;
 }
 
-export function mapProduct(product: ProductRecord): ProductResponse {
-  const basePrice = product.basePrice.toFixed(2);
-
+export function mapProduct(product: PricedProductRecord): ProductResponse {
   return {
     id: product.id,
     name: product.name,
     sku: product.sku,
-    basePrice,
-    effectivePrice: basePrice,
+    basePrice: product.basePrice.toFixed(2),
+    effectivePrice: product.effectivePrice.toFixed(2),
     stockQuantity: product.stockQuantity,
     category: product.category,
     createdAt: product.createdAt.toISOString(),

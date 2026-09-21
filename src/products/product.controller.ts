@@ -6,7 +6,8 @@ import { getProductById, listProducts } from './product.service.js';
 
 export async function listProductController(req: Request, res: Response): Promise<void> {
   const query = parseProductListQuery(req.query);
-  const result = await listProducts(query);
+  const evaluationTime = new Date(Date.now());
+  const result = await listProducts(query, evaluationTime);
 
   res.status(200).json({
     data: result.products.map(mapProduct),
@@ -21,7 +22,8 @@ export async function listProductController(req: Request, res: Response): Promis
 
 export async function getProductController(req: Request, res: Response): Promise<void> {
   const id = parseProductId(req.params.id);
-  const product = await getProductById(id);
+  const evaluationTime = new Date(Date.now());
+  const product = await getProductById(id, evaluationTime);
 
   if (product === null) {
     throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'Product not found');
