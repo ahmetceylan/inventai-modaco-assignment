@@ -6,6 +6,8 @@ export interface ProductListQuery {
   page: number;
   pageSize: number;
   categoryId?: string;
+  sort?: 'effectivePrice';
+  order?: 'asc' | 'desc';
 }
 
 function parsePositiveInteger(value: unknown, field: string, defaultValue: number): number {
@@ -47,7 +49,27 @@ export function parseProductListQuery(query: Record<string, unknown>): ProductLi
     throw validationError([{ field: 'categoryId', message: 'Must be a valid UUID' }]);
   }
 
-  return categoryId === undefined ? { page, pageSize } : { page, pageSize, categoryId };
+  const sort = query.sort;
+  const order = query.order;
+
+  if (sort === undefined && order !== undefined) {
+    throw validationError([{ field: 'order', message: 'Requires sort=effectivePrice' }]);
+  }
+
+  if (sort !== undefined && sort !== 'effectivePrice') {
+    throw validationError([{ field: 'sort', message: 'Must be effectivePrice' }]);
+  }
+
+  if (order !== undefined && order !== 'asc' && order !== 'desc') {
+    throw validationError([{ field: 'order', message: 'Must be asc or desc' }]);
+  }
+
+  return {
+    page,
+    pageSize,
+    ...(categoryId === undefined ? {} : { categoryId }),
+    ...(sort === 'effectivePrice' ? { sort, order: order ?? 'asc' } : {}),
+  };
 }
 
 export function parseProductId(id: unknown): string {

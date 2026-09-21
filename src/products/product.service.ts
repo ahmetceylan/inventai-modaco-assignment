@@ -4,6 +4,10 @@ import {
   calculateEffectivePrice,
   type PricePromotion,
 } from '../pricing/calculate-effective-price.js';
+import {
+  mapEffectivePriceRows,
+  queryProductsByEffectivePrice,
+} from './product-effective-price.query.js';
 import { type ProductListQuery } from './product.schemas.js';
 
 export const productSelect = {
@@ -52,6 +56,24 @@ export async function listProducts(
 ): Promise<ProductPage> {
   const where: Prisma.ProductWhereInput =
     query.categoryId === undefined ? {} : { categoryId: query.categoryId };
+
+  if (query.sort === 'effectivePrice') {
+    const [totalItems, rows] = await prisma.$transaction([
+      prisma.product.count({ where }),
+      queryProductsByEffectivePrice({
+        ...(query.categoryId === undefined ? {} : { categoryId: query.categoryId }),
+        order: query.order ?? 'asc',
+        evaluationTime,
+        offset: (query.page - 1) * query.pageSize,
+        limit: query.pageSize,
+      }),
+    ]);
+
+    return {
+      products: mapEffectivePriceRows(rows),
+      totalItems,
+    };
+  }
 
   const [totalItems, products] = await prisma.$transaction([
     prisma.product.count({ where }),
