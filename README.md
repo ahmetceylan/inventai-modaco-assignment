@@ -1,137 +1,319 @@
-# inventai-modaco-assignment
+# ModaCo Promotion Management API
 
-Minimal Node.js REST API scaffold using Express and TypeScript.
+Internal REST API for ModaCo product catalog and promotions. It returns decimal-safe
+effective prices, accepts streamed vendor CSV uploads, and processes those files through
+bounded one-shot workers. Redis is an optional cache in front of PostgreSQL. The
+implementation is local-first: Compose starts Redis, PostgreSQL is the existing local
+database, and files are stored on disk.
 
-## Requirements
+## Key Features
+
+- Product listing and detail with base price and current effective price
+- Category filtering, offset pagination, and optional effective-price sorting
+- Product-specific and Category Promotions with deterministic precedence
+- Streamed CSV upload with server-generated stored names
+- Chunked preparation and one-shot Product processing workers
+- Retry, bounded backoff, and stale-lock recovery for temporary chunk failures
+- Redis cache-aside for Product detail and the first listing pages, with fail-open reads
+- Optional local performance-verification commands
+
+## Technology Stack
+
+| Component | Implementation |
+| --- | --- |
+| Runtime | Node.js `>=20.11.0` |
+| HTTP | Express `^5.2.1` |
+| Language | TypeScript `^6.0.3` |
+| Database | PostgreSQL via `pg` `^8.23.0` |
+| ORM | Prisma `^7.10.0` (`@prisma/client`, `@prisma/adapter-pg`) |
+| Cache | Redis `^6.2.1` client; Compose image `redis:8-alpine` |
+| Tests | Vitest `^4.1.11`, Supertest `^7.2.2` |
+| Local services | Docker Compose (`compose.yaml`) |
+
+Cloud services, queues, and object storage are not implemented.
+
+## Architecture Overview
+
+```mermaid
+flowchart LR
+    Client --> API["Express API"]
+    API --> PostgreSQL
+    API --> Redis
+    API --> Storage["Local file storage"]
+    Prepare["ingestion:prepare"] --> Storage
+    Prepare --> PostgreSQL
+    Process["ingestion:process"] --> Storage
+    Process --> PostgreSQL
+    Process --> Redis
+```
+
+PostgreSQL is the source of truth for Products, Promotions, and import progress. Redis is
+optional for correctness: reads and writes continue when it is unavailable. Raw CSVs and
+prepared NDJSON chunks live under `IMPORT_STORAGE_PATH`. Preparation and processing are
+one-shot CLI workers. Production object-storage and queue mapping is not implemented here;
+`REQUIREMENTS.md` leaves those choices to a later ADR.
+
+## Domain Rules
+
+- A Product-specific Promotion overrides an applicable Category Promotion.
+- Two non-cancelled Promotions may not overlap at the same Product or the same Category.
+- A Product Promotion and a Category Promotion may overlap; Product scope wins at read time.
+- Active interval is `[startAt, endAt)` in UTC.
+- Cancellation is soft: `cancelledAt` is set and the row is kept.
+- `PERCENTAGE`: `basePrice × (1 - value / 100)`.
+- `FIXED`: `max(0, basePrice - value)`.
+- Effective price is never negative and is rounded half-up to two decimal places.
+- Money uses Prisma `Decimal`, not floating-point arithmetic.
+
+## Prerequisites
 
 - Node.js 20.11 or later
+- npm (this repository uses `package-lock.json`)
+- Docker and Docker Compose, for local Redis
+- A local PostgreSQL database reachable at `DATABASE_URL`
 
-## Setup
+Compose does not start PostgreSQL. Default ports used by this project:
+
+- API: `3000`
+- Redis: `6379`
+
+Prisma is a local `devDependency`. Do not assume a global `prisma` install.
+
+## Local Setup
 
 ```bash
+git clone git@github.com:ahmetceylan/inventai-modaco-assignment.git
+cd inventai-modaco-assignment
 npm install
 cp .env.example .env
 ```
 
-Start the local Redis cache:
+Create the PostgreSQL database named in `DATABASE_URL` (example: `modaco`), then:
 
 ```bash
 docker compose up -d redis
-```
-
-## Scripts
-
-| Script                          | Purpose                            |
-| ------------------------------- | ---------------------------------- |
-| `npm run dev`                   | Start the API with hot reload      |
-| `npm run build`                 | Compile TypeScript to `dist/`      |
-| `npm start`                     | Run the compiled API               |
-| `npm run lint`                  | Lint the project                   |
-| `npm run format`                | Format files with Prettier         |
-| `npm test`                      | Run the test suite                 |
-| `npm run prisma:generate`       | Generate Prisma Client             |
-| `npm run prisma:migrate`        | Create and apply a local migration |
-| `npm run prisma:migrate:deploy` | Apply migrations without prompting |
-| `npm run perf:generate-vendor`  | Generate a deterministic vendor CSV |
-| `npm run perf:ingestion`        | Run the real local ingestion flow |
-| `npm run perf:seed-flash-sale`  | Seed or clean reserved flash-sale data |
-| `npm run perf:read`             | Comparative local Product read smoke test |
-
-Database constraint tests need a migrated local PostgreSQL database:
-
-```bash
-cp .env.example .env
 npm run prisma:generate
 npm run prisma:migrate:deploy
-npm test
+npm run dev
 ```
 
-## Database constraints
+In another terminal:
 
-Prisma defines the core tables, relations, types, and indexes. PostgreSQL-specific `CHECK`
-and exclusion constraints that Prisma cannot represent are maintained in committed migration SQL.
-Promotion assignment pre-checks provide user-friendly conflicts but are race-prone; PostgreSQL
-atomically rejects overlapping non-cancelled schedules at the same Product or Category. Half-open
-`[startAt, endAt)` ranges permit adjacency, while Product and Category schedules may overlap because
-Product precedence is resolved during reads. This uses the PostgreSQL-specific `btree_gist`
-extension as a portability trade-off.
+```bash
+curl http://localhost:3000/health
+```
 
-## Product detail cache
+Expected body: `{"status":"ok"}`.
 
-`GET /products/:id` uses Redis as a cache-aside optimization; PostgreSQL remains the source of
-truth. Local configuration defaults to:
+`DATABASE_URL` is required by the Prisma client. The process cannot start API routes that
+import Prisma without it.
 
-- `REDIS_URL=redis://localhost:6379`
-- `PRODUCT_DETAIL_CACHE_TTL_SECONDS=30`
+## Environment Variables
 
-Each cached public Product DTO is stored under `cache:product-detail:<productId>` in a validated,
-versioned JSON envelope. `cache:product-version:<productId>` tracks Product changes and
-`cache:category-promotion-version:<categoryId>` tracks Category Promotion changes. Product
-Promotion changes increment one Product version. Category Promotion changes increment one Category
-version, logically invalidating every related Product without scanning or deleting Product keys.
+Values below match `.env.example` and the defaults in `src/config/env.ts` unless noted.
 
-Cache misses use the existing PostgreSQL effective-price resolver. Version values are checked before
-and after the database load, and the final Redis write compares them atomically to prevent stale
-cache writes. Concurrent misses for one Product share one database-loading Promise within one Node
-process; cross-instance stampede prevention is intentionally deferred.
+| Variable | Required | Default / example | Purpose |
+| --- | --- | --- | --- |
+| `NODE_ENV` | no | `development` | `development`, `test`, or `production` |
+| `PORT` | no | `3000` | HTTP listen port |
+| `DATABASE_URL` | yes | `postgresql://postgres:postgres@localhost:5432/modaco?schema=public` | PostgreSQL connection string (validated by Prisma, not `env.ts`) |
+| `REDIS_URL` | no | `redis://localhost:6379` | Redis URL (`redis://` or `rediss://`) |
+| `IMPORT_STORAGE_PATH` | no | `./data/imports` | Root for raw uploads and chunks |
+| `MAX_IMPORT_FILE_SIZE_BYTES` | no | `536870912` | Maximum streamed CSV size (512 MiB) |
+| `IMPORT_CHUNK_SIZE` | no | `500` (max `10000`) | Prepared NDJSON rows per chunk |
+| `IMPORT_MAX_ATTEMPTS` | no | `3` | Chunk claim attempts before terminal failure |
+| `IMPORT_RETRY_BASE_DELAY_SECONDS` | no | `5` | Retry backoff base |
+| `IMPORT_RETRY_MAX_DELAY_SECONDS` | no | `300` | Retry backoff cap; must be `>=` base |
+| `IMPORT_LOCK_TIMEOUT_SECONDS` | no | `300` | Stale `PROCESSING` lock timeout |
+| `PRODUCT_DETAIL_CACHE_TTL_SECONDS` | no | `30` | Product detail entry TTL |
+| `PRODUCT_LIST_CACHE_TTL_SECONDS` | no | `15` | Product listing entry TTL |
+| `PRODUCT_LIST_CACHE_MAX_PAGE` | no | `5` | Highest listing page stored in Redis |
+| `HTTP_BODY_LIMIT` | no | `1mb` | JSON and URL-encoded body limit (`b` / `kb` / `mb`) |
+| `SHUTDOWN_TIMEOUT_SECONDS` | no | `10` | Graceful-shutdown force-exit timeout |
+| `PRICING_RULE_VERSION` | no | `v1` | Pricing rule stamped on new ImportJobs |
 
-Redis reads, writes, and invalidations fail open. If Redis is unavailable, Product reads continue
-from PostgreSQL and committed Promotion or ingestion writes still succeed. Failed invalidation may
-leave a cached response stale only until its short TTL expires. This selects A-10 as bounded eventual
-consistency with a normal maximum stale window equal to `PRODUCT_DETAIL_CACHE_TTL_SECONDS`.
-Assignment and cancellation invalidate immediately when Redis is available; scheduled Promotion
-`startAt` and `endAt` boundaries rely on the same TTL and do not require timers.
+Do not commit `.env`. The example credentials are local placeholders only.
 
-## Product listing cache
+## Available Commands
 
-`GET /products` uses the same fail-open Redis client and caches only validated pages from 1 through
-`PRODUCT_LIST_CACHE_MAX_PAGE`, defaulting to 5. Deeper pages bypass Redis. Listing entries expire
-after `PRODUCT_LIST_CACHE_TTL_SECONDS`, defaulting to 15 seconds.
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the API with `tsx watch` |
+| `npm run build` | Compile TypeScript to `dist/` |
+| `npm start` | Run `node dist/index.js` |
+| `npm run lint` | ESLint with `--max-warnings 0` |
+| `npm run format` | Prettier write |
+| `npm test` | Vitest full suite |
+| `npm run prisma:generate` | Generate Prisma Client |
+| `npm run prisma:migrate` | Create and apply a local migration |
+| `npm run prisma:migrate:deploy` | Apply committed migrations |
+| `npm run ingestion:prepare` | Prepare at most one pending ImportJob |
+| `npm run ingestion:process` | Process at most one available chunk |
+| `npm run perf:generate-vendor` | Stream a deterministic vendor CSV |
+| `npm run perf:ingestion` | Run the real local ingestion path |
+| `npm run perf:seed-flash-sale` | Seed or clean reserved flash-sale data |
+| `npm run perf:read` | Comparative local Product read smoke test |
 
-Keys use the schema-versioned form
-`cache:product-list:v1:<scope>:<version>:page=<page>:pageSize=<pageSize>:sort=<sort>:order=<order>`.
-Only normalized page, page size, Category, sort, and order values are included. Unfiltered requests
-use `cache:product-list-version:global`; filtered requests use
-`cache:product-list-version:category:<categoryId>`.
+There is no separate `typecheck` script. `npm run build` is the TypeScript compile step.
 
-Committed ingestion chunks increment the global version once and each affected old or new Category
-version once. Product Promotion changes increment global and the Product's Category versions;
-Category Promotion changes increment global and the targeted Category versions. Version increments
-replace key scans and listing-key deletion. Cache fills compare the scope version before and after
-the PostgreSQL query and use an atomic final version check, preventing stale writes after
-invalidation.
+## API Overview
 
-Redis failure falls back to the existing PostgreSQL listing query and does not fail Product,
-Promotion, or ingestion operations. Failed invalidation can leave a listing stale for at most the
-15-second default TTL. Scheduled Promotion boundaries use the same bounded eventual-consistency
-window. Concurrent misses for one complete listing key share a Promise only within one Node
-process; no distributed lock is used.
+There is no URL prefix. Errors use:
 
-## Ingestion persistence
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid request parameters",
+    "details": [{ "field": "page", "message": "Must be a positive integer" }]
+  }
+}
+```
 
-PostgreSQL stores durable import-job, bounded-chunk, and row-failure state so progress can survive
-disposable worker processes. File and chunk content remains in external file storage and is
-referenced by `storagePath`; it is not stored in the database. `fileChecksum` is retained for future
-duplicate detection, but duplicate-file policy remains unresolved. Future worker logic will update
-job counters explicitly and transactionally. Production queue and object-storage mappings remain
-an ADR concern.
+Unknown routes return `404` with `NOT_FOUND`. Unexpected errors return `500` with
+`INTERNAL_ERROR` and no stack, SQL, paths, or connection details.
 
-### Local uploads
+### `GET /health`
 
-Local upload configuration:
+Liveness probe. Does not check Redis or PostgreSQL.
 
-- `IMPORT_STORAGE_PATH=./data/imports`
-- `MAX_IMPORT_FILE_SIZE_BYTES=536870912`
-- `IMPORT_CHUNK_SIZE=500`
-- `IMPORT_MAX_ATTEMPTS=3`
-- `IMPORT_RETRY_BASE_DELAY_SECONDS=5`
-- `IMPORT_RETRY_MAX_DELAY_SECONDS=300`
-- `IMPORT_LOCK_TIMEOUT_SECONDS=300`
-- `HTTP_BODY_LIMIT=1mb`
-- `SHUTDOWN_TIMEOUT_SECONDS=10`
-- `PRICING_RULE_VERSION=v1`
+Success: `200`
 
-The storage directory is created when needed and is ignored by Git. Upload a CSV with:
+```json
+{ "status": "ok" }
+```
+
+### `GET /products`
+
+Lists Products with current effective prices.
+
+| Query | Default | Notes |
+| --- | --- | --- |
+| `page` | `1` | Positive integer |
+| `pageSize` | `20` | `1`–`100` |
+| `categoryId` | omitted | UUID |
+| `sort` | omitted | Only `effectivePrice` is accepted |
+| `order` | `asc` when `sort` is set | `asc` or `desc`; requires `sort` |
+
+Without `sort`, order is Product `id` ascending. With `sort=effectivePrice`, the SQL path
+calculates effective price over the full filtered set, sorts by that price then Product `id`,
+and only then applies offset pagination.
+
+Success: `200`
+
+```http
+GET /products?categoryId=40000000-0000-4000-8000-000000000001&sort=effectivePrice&page=1&pageSize=20
+```
+
+```json
+{
+  "data": [
+    {
+      "id": "50000000-0000-4000-8000-000000000001",
+      "name": "Sunglasses",
+      "sku": "SUN-001",
+      "basePrice": "100.00",
+      "effectivePrice": "80.00",
+      "stockQuantity": 10,
+      "category": { "id": "40000000-0000-4000-8000-000000000001", "name": "Accessories" },
+      "createdAt": "2030-01-01T00:00:00.000Z",
+      "updatedAt": "2030-01-02T00:00:00.000Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "pageSize": 20,
+    "totalItems": 1,
+    "totalPages": 1
+  }
+}
+```
+
+Important errors: `400 VALIDATION_ERROR`.
+
+### `GET /products/:id`
+
+Returns one Product and its current effective price.
+
+Success: `200` `{ "data": { ...product } }`
+
+Important errors: `400 VALIDATION_ERROR`, `404 PRODUCT_NOT_FOUND`.
+
+### `POST /promotions`
+
+Creates an unassigned Promotion. Body fields: `name`, `discountType` (`PERCENTAGE` or
+`FIXED`), `value` (decimal string), `startAt`, `endAt` (ISO 8601 with timezone).
+`productId` and `categoryId` are not accepted here.
+
+Success: `201`
+
+```http
+POST /promotions
+Content-Type: application/json
+
+{
+  "name": "Summer Sale",
+  "discountType": "PERCENTAGE",
+  "value": "20.00",
+  "startAt": "2030-06-01T00:00:00.000Z",
+  "endAt": "2030-07-01T00:00:00.000Z"
+}
+```
+
+```json
+{
+  "data": {
+    "id": "60000000-0000-4000-8000-000000000001",
+    "name": "Summer Sale",
+    "discountType": "PERCENTAGE",
+    "value": "20.00",
+    "startAt": "2030-06-01T00:00:00.000Z",
+    "endAt": "2030-07-01T00:00:00.000Z",
+    "cancelledAt": null,
+    "target": null,
+    "createdAt": "2030-01-01T00:00:00.000Z",
+    "updatedAt": "2030-01-01T00:00:00.000Z"
+  }
+}
+```
+
+Important errors: `400 VALIDATION_ERROR`.
+
+### `POST /promotions/:id/assign`
+
+Assigns an unassigned Promotion to exactly one target:
+
+```json
+{ "productId": "50000000-0000-4000-8000-000000000001" }
+```
+
+or
+
+```json
+{ "categoryId": "40000000-0000-4000-8000-000000000001" }
+```
+
+Repeating the same target returns `200` without changing state. A different target returns
+`409 PROMOTION_ALREADY_ASSIGNED`. Same-scope overlap returns `409 PROMOTION_CONFLICT`.
+Cancelled Promotions return `409 PROMOTION_CANCELLED`.
+
+Success: `200` `{ "data": { ..., "target": { "type": "PRODUCT", "id": "..." } } }`
+
+Important errors: `400`, `404 PROMOTION_NOT_FOUND`, `404 PRODUCT_NOT_FOUND`,
+`404 CATEGORY_NOT_FOUND`, `409`.
+
+### `POST /promotions/:id/cancel`
+
+Soft-cancels a Promotion. Repeating the call returns `200` with the existing `cancelledAt`.
+
+Success: `200`
+
+Important errors: `400`, `404 PROMOTION_NOT_FOUND`.
+
+### `POST /imports`
+
+Accepts one multipart field named `file`. Stores the CSV on disk and creates a `PENDING`
+ImportJob. `202` means the file is stored, not that Products were written.
 
 ```bash
 curl -X POST \
@@ -139,139 +321,130 @@ curl -X POST \
   http://localhost:3000/imports
 ```
 
-`202 Accepted` means the raw file is safely stored and an ImportJob exists; it does not mean the
-file has been parsed or processed. The Job remains `PENDING` until preparation runs.
+Success: `202`
 
-### Local preparation
-
-Prepare at most one pending import and exit:
-
-```bash
-npm run ingestion:prepare
-npm run ingestion:prepare -- --job-id=<import-job-uuid>
+```json
+{
+  "data": {
+    "id": "70000000-0000-4000-8000-000000000001",
+    "status": "PENDING",
+    "originalFileName": "vendor-products.csv",
+    "totalRows": null,
+    "processedRows": 0,
+    "succeededRows": 0,
+    "failedRows": 0,
+    "pricingRuleVersion": "v1",
+    "createdAt": "2030-01-01T00:00:00.000Z",
+    "statusUrl": "/imports/70000000-0000-4000-8000-000000000001"
+  }
+}
 ```
 
-Preparation requires the case-sensitive headers `sku`, `name`, `category`, `basePrice`, and
-`stockQuantity`. It streams the raw CSV once, computes SHA-256 from the original bytes, and writes
-bounded NDJSON chunks under `data/imports/chunks/<job-id>/`. Each line contains the source
-`rowNumber` and an unvalidated string-valued `data` object.
+Important errors: `400 IMPORT_FILE_REQUIRED`, `400 EMPTY_IMPORT_FILE`,
+`400 UNSUPPORTED_IMPORT_FILE`, `400 VALIDATION_ERROR`, `413 IMPORT_FILE_TOO_LARGE`.
 
-The preparation lifecycle is `PENDING → PREPARING → READY`; malformed files become `FAILED`.
-Preparation does not write Product records or apply pricing rules. A failed attempt preserves the
-raw CSV but removes partial chunks. A future explicit retry will restart this lightweight split
-step from the beginning rather than from a byte checkpoint; Product processing remains separately
-chunked and retryable. Production object storage and serverless execution may replace this local
-mechanism.
+### `GET /imports/:id`
 
-### Local Product-chunk processing
+Returns public job progress. `storagePath` is never included.
 
-Process at most one available prepared chunk and exit:
+Success: `200`
+
+Important errors: `400 VALIDATION_ERROR`, `404 IMPORT_JOB_NOT_FOUND`.
+
+## Vendor CSV Format
+
+Required headers, case-sensitive:
+
+```csv
+sku,name,category,basePrice,stockQuantity
+SUN-001,Sunglasses,Accessories,100.00,10
+BAG-002,Tote Bag,Bags,49.50,3
+```
+
+- Maximum file size: `MAX_IMPORT_FILE_SIZE_BYTES` (default 512 MiB).
+- Preparation validates headers, streams the file, and writes NDJSON chunks. It does not
+  apply Product business validation.
+- Processing validates each row: non-empty SKU/name/category, non-negative decimal
+  `basePrice` (v1 rule, two decimal places, max `9999999999.99`), non-negative integer
+  `stockQuantity` up to `2147483647`.
+- Within one chunk, the first valid SKU is accepted; later copies become
+  `DUPLICATE_SKU_IN_CHUNK` failures.
+- An existing Product with the same SKU is upserted (name, category, base price, stock).
+- Ordering across chunks or imports is not a guaranteed business policy (open item A-08).
+
+## Ingestion Workflow
+
+Implemented job statuses:
+
+```text
+PENDING → PREPARING → READY → PROCESSING → COMPLETED | COMPLETED_WITH_ERRORS | FAILED
+```
+
+The Prisma enum also includes `CANCELLED`. No HTTP or worker path sets that status.
+
+1. `POST /imports` streams the CSV to `IMPORT_STORAGE_PATH` under a UUID filename.
+2. `npm run ingestion:prepare` claims one `PENDING` job, validates CSV structure, writes
+   chunks under `chunks/<job-id>/`, and moves the job to `READY` or `FAILED`.
+3. `npm run ingestion:process` claims one available chunk, applies the `v1` pricing rule,
+   upserts Products, records row failures, and updates counters in one transaction.
+4. Temporary Prisma/filesystem errors requeue the chunk with
+   `min(baseDelay × 2^(attemptCount - 1), maxDelay)` until `IMPORT_MAX_ATTEMPTS`.
+5. Before a normal claim, the worker recovers at most 100 stale `PROCESSING` locks older
+   than `IMPORT_LOCK_TIMEOUT_SECONDS`.
+6. `GET /imports/:id` reports progress.
+
+Optional job targeting:
 
 ```bash
-npm run ingestion:process
+npm run ingestion:prepare -- --job-id=<import-job-uuid>
 npm run ingestion:process -- --job-id=<import-job-uuid>
 ```
 
-The explicit `v1` pricing rule accepts a non-negative vendor decimal and normalizes it to two
-decimal places using decimal round-half-up. Within one chunk, the first valid normalized SKU is
-accepted and later occurrences become `DUPLICATE_SKU_IN_CHUNK` failures. Existing Products are
-upserted by SKU, including their name, Category, base price, and stock.
+Workers exit after one unit of work so they can model disposable serverless executions.
+There is no in-process poller and no external queue.
 
-Category creation, Product upserts, row failures, chunk completion, and job counters commit in one
-database transaction after the bounded chunk has been streamed and validated. Duplicate ordering
-across chunks or imports remains unresolved under A-08.
+## Caching and Consistency
 
-Chunk delivery is assumed to be at least once. `attemptCount` is incremented on every claim and,
-together with `lockedBy`, acts as the fencing token. Before Product writes, the transaction verifies
-that the worker still owns that exact attempt. Category writes, Product upserts, row-level failures,
-chunk completion, counters, and the job completion decision remain the transactional idempotency
-boundary. A crash before commit rolls all of them back; a crash after commit leaves a `COMPLETED`
-chunk that cannot be claimed again.
+`GET /products/:id` and eligible `GET /products` pages use Redis cache-aside.
+PostgreSQL remains authoritative.
 
-Known temporary Prisma and filesystem errors return the owned chunk to `PENDING` while attempts
-remain. Retry delay is `min(baseDelay × 2^(attemptCount - 1), maxDelay)`. Malformed or missing chunk
-files, unsupported pricing rules, invariants, and unknown errors fail immediately. Before a normal
-claim, each invocation recovers at most 100 expired `PROCESSING` locks. An expired chunk at the
-maximum attempt count becomes `FAILED`.
+- Detail key: `cache:product-detail:<productId>`
+- Detail versions: `cache:product-version:<productId>`,
+  `cache:category-promotion-version:<categoryId>`
+- Listing keys include schema version, global or Category scope, listing version, page,
+  pageSize, sort, and order
+- Listing versions: `cache:product-list-version:global` and
+  `cache:product-list-version:category:<categoryId>`
+- Only listing pages `1` through `PRODUCT_LIST_CACHE_MAX_PAGE` are cached
+- Writes increment versions after commit; keys are not scanned or bulk-deleted
+- If Redis is down, Product reads use PostgreSQL and Promotion/ingestion writes still
+  succeed
+- Scheduled `startAt` / `endAt` boundaries rely on TTL rather than a timer
+- Single-flight deduplication is per Node process only
 
-For this local implementation, a terminal `FAILED` chunk plus its chunk-level `ImportFailure` is the
-durable dead-letter representation. A production deployment may map that state to a managed DLQ,
-but no external queue or DLQ is implemented here. Continuous polling, manual retry, duplicate-file
-rejection, cross-import ordering, caching, representative-volume performance testing, and cloud
-queue/object-storage deployment remain deferred.
+Assumption A-10: bounded eventual consistency. The normal stale window is the configured
+TTL when invalidation fails.
 
-## Process lifecycle
-
-The Express application is constructed in `src/app.ts`. HTTP listening and process signals live in
-`src/server.ts`, so tests can import the app without opening a port or registering handlers.
-
-`SIGTERM` and `SIGINT` start an idempotent graceful shutdown:
-
-1. Stop accepting new HTTP connections.
-2. Close idle keep-alive connections when the Node.js version supports it.
-3. Allow in-flight requests to finish, bounded by `SHUTDOWN_TIMEOUT_SECONDS` (default 10).
-4. Close the shared Redis client if it was initialized.
-5. Disconnect the shared Prisma Client.
-6. Exit `0` when cleanup completes, or force-exit `1` if the timeout elapses.
-
-A resource-close failure is logged without credentials or connection URLs and does not skip the
-remaining steps. Successful cleanup clears the force-exit timer.
-
-One-shot `ingestion:prepare` and `ingestion:process` workers do not claim extra work after they
-start. If the process is terminated before a chunk transaction commits, rollback and stale-lock
-recovery reclaim the work. If termination happens after commit, the completed chunk is not
-reclaimed. Workers close Prisma and Redis on normal completion; they do not reuse the HTTP
-shutdown sequence.
-
-## Upload and request limits
-
-- `MAX_IMPORT_FILE_SIZE_BYTES` limits streamed CSV uploads (default 512 MiB). Oversized files
-  return `413`.
-- Multipart requests accept exactly one `file` field, with finite field, file, and part counts.
-  Invalid or unsupported uploads return `400`.
-- Empty files, missing files, extra files, and unsupported types are rejected. Partial files and
-  files left behind after ImportJob persistence failure are removed.
-- Stored names are server-generated UUIDs. Client filenames are metadata only and cannot choose
-  the path, escape `IMPORT_STORAGE_PATH`, or overwrite an existing file.
-- Raw upload and generated chunk paths are resolved and checked against the configured storage
-  root before any filesystem operation. Public responses do not include absolute paths.
-- `HTTP_BODY_LIMIT` (default `1mb`) applies only to JSON and URL-encoded bodies. It does not cap
-  streamed CSV bytes.
-
-## Authentication
-
-Authentication and authorization are intentionally outside this case-study implementation (A-12).
-A production deployment must place management and ingestion endpoints behind authentication and
-authorization.
-
-## Health check
-
-`GET /health` is a liveness probe. It does not depend on Redis. Redis is optional for correctness:
-Product reads fall back to PostgreSQL, and Promotion or ingestion writes still succeed when Redis
-is unavailable.
+## Testing
 
 ```bash
-curl http://localhost:3000/health
+npm test
+npm run lint
+npm run build
 ```
 
-## Local performance verification
+The suite includes unit and integration tests in `tests/`. Constraint and endpoint tests
+need a migrated local PostgreSQL database. Redis integration files are skipped unless
+`RUN_REDIS_INTEGRATION_TESTS=true`. Product tests still pass when Redis is unavailable
+because cache operations fail open.
 
-These commands are manual. `npm test` does not run them. They need the existing local PostgreSQL
-database (`DATABASE_URL`) and Redis from Compose. Generated files stay under `tmp/`, which Git
-ignores.
+There are no separate `test:unit` or `test:integration` scripts. Large 50k/500k
+performance runs are manual and are not part of `npm test`.
 
-Large runs can take several minutes and tens of megabytes of disk for a 500,000-row CSV plus
-prepared chunks. Do not treat laptop or local Docker numbers as production capacity. See
-`PERFORMANCE.md`.
+## Performance Verification
 
-Required services:
-
-```bash
-docker compose up -d redis
-# PostgreSQL is the existing local database configured by DATABASE_URL
-```
-
-Safe order:
+Optional commands. Details and measured-vs-unmeasured results are in
+[PERFORMANCE.md](PERFORMANCE.md). Local Docker numbers are not production capacity.
 
 ```bash
 npm run perf:generate-vendor -- --rows=500000 --output=./tmp/perf/vendor-500k.csv
@@ -279,13 +452,66 @@ npm run perf:ingestion -- --file=./tmp/perf/vendor-500k.csv
 npm run perf:seed-flash-sale -- --products=50000 --explain
 npm run dev
 npm run perf:read -- --url=http://localhost:3000 --duration=30 --concurrency=20
+npm run perf:seed-flash-sale -- --cleanup
 ```
 
-Redis-unavailable reads require the API to be started after Redis is stopped. The read command
-does not stop Redis itself.
+Cleanup is limited to `PERF_ACCESSORIES`, `PERFR-`, and `PERF_FLASH_SALE`. Generated files
+under `tmp/` are Git-ignored.
 
-Cleanup is limited to reserved identifiers `PERF_ACCESSORIES`, `PERFR-`, and `PERF_FLASH_SALE`:
+## Design Decisions
 
-```bash
-npm run perf:seed-flash-sale -- --cleanup
+| Document | Purpose |
+| --- | --- |
+| [REQUIREMENTS.md](REQUIREMENTS.md) | Assignment requirements, assumptions, and open decisions |
+| [PERFORMANCE.md](PERFORMANCE.md) | Manual benchmark commands and recorded local measurements |
+
+`ADR.md` and `AI_APPENDIX.md` are required submission artifacts in `REQUIREMENTS.md` but
+are not in this repository yet.
+
+## Assumptions and Known Limitations
+
+- Authentication and authorization are outside this case-study implementation (A-12). A
+  production deployment must protect management and ingestion endpoints.
+- Local disk stands in for object storage. `data/imports/` is Git-ignored.
+- ImportJob/ImportChunk rows stand in for a managed queue. No SQS, Service Bus, or worker
+  pool is implemented.
+- Duplicate-file and cross-import SKU ordering remain an open business decision (A-08).
+- Redis is not a source of truth.
+- Local performance measurements do not represent production capacity.
+- Serverless execution is modeled by one-shot workers; no cloud function is provisioned.
+- Docker Compose starts Redis only. PostgreSQL must already exist locally.
+- ImportJob status `CANCELLED` exists in Prisma but has no cancel API.
+- There is no dedicated TypeScript `typecheck` script beyond `npm run build`.
+
+These are scoped case-study choices, not silent defects in the implemented API.
+
+## Graceful Shutdown and Operational Notes
+
+`src/server.ts` registers `SIGTERM` and `SIGINT`. Shutdown is idempotent: stop accepting
+connections, close idle sockets when the Node.js version supports it, wait for in-flight
+requests, close Redis if opened, disconnect Prisma, then exit. If cleanup exceeds
+`SHUTDOWN_TIMEOUT_SECONDS`, the process force-exits. Workers close the same shared
+resources after one job or chunk.
+
+JSON/form bodies use `HTTP_BODY_LIMIT`. Multipart CSVs use `MAX_IMPORT_FILE_SIZE_BYTES`.
+Upload and chunk paths are resolved inside `IMPORT_STORAGE_PATH`. Git ignores `.env`,
+`data/imports/`, `tmp/`, `dist/`, and `generated/`.
+
+## Repository Structure
+
+```text
+src/app.ts                 Express app; no listen, no signal handlers
+src/server.ts              HTTP listen and process lifecycle
+src/index.ts               Process entry
+src/config/                Environment, Prisma, shared resource close
+src/http/                  Errors and sanitized error handler
+src/products/              Product routes, query, mapping
+src/promotions/            Promotion routes and conflict checks
+src/pricing/               Effective-price calculation
+src/cache/                 Redis client, keys, detail/list cache
+src/ingestion/             Upload, prepare, process, retry
+src/perf/                  Optional local performance tools
+src/health/                Liveness route
+prisma/                    Schema and SQL migrations
+tests/                     Vitest unit and integration tests
 ```
