@@ -71,6 +71,21 @@ const readRequiredString = (name: string, defaultValue: string): string => {
   return value;
 };
 
+const readRedisUrl = (): string => {
+  const value = readRequiredString('REDIS_URL', 'redis://localhost:6379');
+
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'redis:' && url.protocol !== 'rediss:') {
+      throw new Error();
+    }
+  } catch {
+    throw new Error('Invalid REDIS_URL. Expected a valid redis:// or rediss:// URL.');
+  }
+
+  return value;
+};
+
 const importRetryBaseDelaySeconds = readPositiveInteger('IMPORT_RETRY_BASE_DELAY_SECONDS', '5');
 const importRetryMaxDelaySeconds = readPositiveInteger('IMPORT_RETRY_MAX_DELAY_SECONDS', '300');
 
@@ -90,5 +105,7 @@ export const env = {
   IMPORT_RETRY_BASE_DELAY_SECONDS: importRetryBaseDelaySeconds,
   IMPORT_RETRY_MAX_DELAY_SECONDS: importRetryMaxDelaySeconds,
   IMPORT_LOCK_TIMEOUT_SECONDS: readPositiveInteger('IMPORT_LOCK_TIMEOUT_SECONDS', '300'),
+  REDIS_URL: readRedisUrl(),
+  PRODUCT_DETAIL_CACHE_TTL_SECONDS: readPositiveInteger('PRODUCT_DETAIL_CACHE_TTL_SECONDS', '30'),
   PRICING_RULE_VERSION: readRequiredString('PRICING_RULE_VERSION', 'v1'),
 } as const;

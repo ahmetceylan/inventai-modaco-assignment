@@ -1,4 +1,8 @@
 import { prisma } from '../config/prisma.js';
+import {
+  productCacheInvalidator,
+  type ProductCacheInvalidator,
+} from '../cache/product-cache-invalidation.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { HttpError } from '../http/errors.js';
 import { type CreatePromotionInput, type PromotionTarget } from './promotion.schemas.js';
@@ -34,10 +38,11 @@ export const createPromotion = (input: CreatePromotionInput): Promise<PromotionR
 export const assignPromotion = async (
   promotionId: string,
   target: PromotionTarget,
+  cacheInvalidator: ProductCacheInvalidator = productCacheInvalidator,
 ): Promise<PromotionRecord> => {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      return await prisma.$transaction(async (transaction) => {
+      const result = await prisma.$transaction(async (transaction) => {
         const promotion = await transaction.promotion.findUnique({
           where: { id: promotionId },
           select: promotionSelect,
@@ -60,7 +65,7 @@ export const assignPromotion = async (
             promotion.productId === null);
 
         if (sameTarget) {
-          return promotion;
+          return { promotion, changed: false };
         }
 
         if (promotion.productId !== null || promotion.categoryId !== null) {
@@ -88,12 +93,18 @@ export const assignPromotion = async (
           throw promotionConflictError();
         }
 
-        return transaction.promotion.update({
+        const assigned = await transaction.promotion.update({
           where: { id: promotion.id },
           data: target.type === 'PRODUCT' ? { productId: target.id } : { categoryId: target.id },
           select: promotionSelect,
         });
+        return { promotion: assigned, changed: true };
       });
+
+      if (result.changed) {
+        await invalidatePromotionTarget(cacheInvalidator, target);
+      }
+      return result.promotion;
     } catch (error) {
       if (isPromotionOverlapConstraintError(error)) {
         throw promotionConflictError();
@@ -112,8 +123,11 @@ export const assignPromotion = async (
   throw new Error('Promotion assignment retry exhausted');
 };
 
-export const cancelPromotion = async (promotionId: string): Promise<PromotionRecord> => {
-  return prisma.$transaction(async (transaction) => {
+export const cancelPromotion = async (
+  promotionId: string,
+  cacheInvalidator: ProductCacheInvalidator = productCacheInvalidator,
+): Promise<PromotionRecord> => {
+  const result = await prisma.$transaction(async (transaction) => {
     const promotion = await transaction.promotion.findUnique({
       where: { id: promotionId },
       select: promotionSelect,
@@ -124,10 +138,10 @@ export const cancelPromotion = async (promotionId: string): Promise<PromotionRec
     }
 
     if (promotion.cancelledAt !== null) {
-      return promotion;
+      return { promotion, changed: false };
     }
 
-    await transaction.promotion.updateMany({
+    const updated = await transaction.promotion.updateMany({
       where: {
         id: promotion.id,
         cancelledAt: null,
@@ -146,8 +160,44 @@ export const cancelPromotion = async (promotionId: string): Promise<PromotionRec
       throw new HttpError(404, 'PROMOTION_NOT_FOUND', 'Promotion not found');
     }
 
-    return cancelled;
+    return { promotion: cancelled, changed: updated.count === 1 };
   });
+
+  if (result.changed) {
+    const target =
+      result.promotion.productId === null
+        ? result.promotion.categoryId === null
+          ? null
+          : { type: 'CATEGORY' as const, id: result.promotion.categoryId }
+        : { type: 'PRODUCT' as const, id: result.promotion.productId };
+
+    if (target !== null) {
+      await invalidatePromotionTarget(cacheInvalidator, target);
+    }
+  }
+
+  return result.promotion;
+};
+
+const invalidatePromotionTarget = async (
+  cacheInvalidator: ProductCacheInvalidator,
+  target: PromotionTarget,
+): Promise<void> => {
+  try {
+    if (target.type === 'PRODUCT') {
+      await cacheInvalidator.invalidateProduct(target.id);
+    } else {
+      await cacheInvalidator.invalidateCategory(target.id);
+    }
+  } catch {
+    console.error(
+      JSON.stringify({
+        event: 'product_cache_invalidation_failed',
+        targetType: target.type.toLowerCase(),
+        targetId: target.id,
+      }),
+    );
+  }
 };
 
 const assertTargetExists = async (

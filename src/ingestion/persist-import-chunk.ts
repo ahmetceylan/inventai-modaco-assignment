@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import {
+  productCacheInvalidator,
+  type ProductCacheInvalidator,
+} from '../cache/product-cache-invalidation.js';
 import { prisma } from '../config/prisma.js';
 import { ImportChunkStatus, ImportJobStatus, Prisma } from '../generated/prisma/client.js';
 import { logImportChunkEvent } from './import-chunk-logger.js';
@@ -14,6 +18,7 @@ type Transaction = Prisma.TransactionClient;
 
 interface PersistenceResult {
   jobStatus: ImportJobStatus | null;
+  productIds: string[];
 }
 
 const ownershipWhere = (chunk: ClaimedImportChunk) => {
@@ -89,9 +94,9 @@ const upsertProducts = async (
   transaction: Transaction,
   rows: ValidProductRow[],
   categoryIds: Map<string, string>,
-): Promise<void> => {
+): Promise<string[]> => {
   if (rows.length === 0) {
-    return;
+    return [];
   }
 
   const values = rows.map((row) => {
@@ -134,6 +139,12 @@ const upsertProducts = async (
       "categoryId" = EXCLUDED."categoryId",
       "updatedAt" = CURRENT_TIMESTAMP
   `;
+
+  const products = await transaction.product.findMany({
+    where: { sku: { in: rows.map(({ sku }) => sku) } },
+    select: { id: true },
+  });
+  return products.map(({ id }) => id);
 };
 
 const saveInvalidRows = async (
@@ -232,6 +243,7 @@ export const persistProcessedChunk = async (
   chunk: ClaimedImportChunk,
   rows: ParsedChunkRows,
   now: Date = new Date(),
+  cacheInvalidator: ProductCacheInvalidator = productCacheInvalidator,
 ): Promise<void> => {
   const result = await prisma.$transaction<PersistenceResult>(
     async (transaction) => {
@@ -239,16 +251,33 @@ export const persistProcessedChunk = async (
       await lockProcessableImportJob(transaction, chunk.importJobId);
 
       const categoryIds = await resolveCategoryIds(transaction, rows.validRows);
-      await upsertProducts(transaction, rows.validRows, categoryIds);
+      const productIds = await upsertProducts(transaction, rows.validRows, categoryIds);
       await saveInvalidRows(transaction, chunk, rows);
       await completeChunk(transaction, chunk, now);
 
       return {
         jobStatus: await updateImportJobProgress(transaction, chunk, rows, now),
+        productIds,
       };
     },
     { timeout: 30_000 },
   );
+
+  try {
+    await cacheInvalidator.invalidateProducts(result.productIds, {
+      jobId: chunk.importJobId,
+      chunkId: chunk.id,
+    });
+  } catch {
+    console.error(
+      JSON.stringify({
+        event: 'product_cache_invalidation_failed',
+        targetType: 'product_batch',
+        jobId: chunk.importJobId,
+        chunkId: chunk.id,
+      }),
+    );
+  }
 
   logImportChunkEvent('chunk_completed', {
     jobId: chunk.importJobId,

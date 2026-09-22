@@ -109,6 +109,15 @@ export const getProductById = async (
   return pricedProduct ?? null;
 };
 
+export const getProductCacheIdentity = async (
+  id: string,
+): Promise<{ categoryId: string } | null> => {
+  return prisma.product.findUnique({
+    where: { id },
+    select: { categoryId: true },
+  });
+};
+
 const enrichProductsWithPricing = async (
   products: ProductRecord[],
   evaluationTime: Date,

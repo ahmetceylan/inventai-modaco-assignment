@@ -1,8 +1,9 @@
 import { type Request, type Response } from 'express';
+import { getProductDetailById } from '../cache/product-detail-cache.js';
 import { HttpError } from '../http/errors.js';
 import { mapProduct } from './product.mapper.js';
 import { parseProductId, parseProductListQuery } from './product.schemas.js';
-import { getProductById, listProducts } from './product.service.js';
+import { listProducts } from './product.service.js';
 
 export const listProductController = async (req: Request, res: Response): Promise<void> => {
   const query = parseProductListQuery(req.query);
@@ -23,11 +24,11 @@ export const listProductController = async (req: Request, res: Response): Promis
 export const getProductController = async (req: Request, res: Response): Promise<void> => {
   const id = parseProductId(req.params.id);
   const evaluationTime = new Date(Date.now());
-  const product = await getProductById(id, evaluationTime);
+  const product = await getProductDetailById(id, evaluationTime);
 
   if (product === null) {
     throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'Product not found');
   }
 
-  res.status(200).json({ data: mapProduct(product) });
+  res.status(200).json({ data: product });
 };
