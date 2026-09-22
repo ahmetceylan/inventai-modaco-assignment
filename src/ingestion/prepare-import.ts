@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { join } from 'node:path';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { CsvError, parse } from 'csv-parse';
 import { env } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
 import { ImportJobStatus, Prisma } from '../generated/prisma/client.js';
+import { resolveContainedPath, StoragePathEscapeError } from './import-storage-path.js';
 
 const REQUIRED_HEADERS = ['sku', 'name', 'category', 'basePrice', 'stockQuantity'] as const;
 
@@ -45,21 +46,22 @@ export class ImportPreparationError extends Error {
 }
 
 const resolveStoragePath = (storedPath: string): string => {
-  const absolutePath = resolve(env.IMPORT_STORAGE_PATH, storedPath);
-  const relativePath = relative(env.IMPORT_STORAGE_PATH, absolutePath);
+  try {
+    return resolveContainedPath(env.IMPORT_STORAGE_PATH, storedPath);
+  } catch (error) {
+    if (error instanceof StoragePathEscapeError) {
+      throw new ImportPreparationError(
+        'IMPORT_PREPARATION_FAILED',
+        'Import storage reference is invalid',
+      );
+    }
 
-  if (relativePath === '' || relativePath.startsWith('..') || isAbsolute(relativePath)) {
-    throw new ImportPreparationError(
-      'IMPORT_PREPARATION_FAILED',
-      'Import storage reference is invalid',
-    );
+    throw error;
   }
-
-  return absolutePath;
 };
 
 const chunkDirectoryFor = (jobId: string): string => {
-  return join(env.IMPORT_STORAGE_PATH, 'chunks', jobId);
+  return resolveStoragePath(join('chunks', jobId));
 };
 
 const validateHeaders = (record: string[]): string[] => {
@@ -105,12 +107,11 @@ const publishChunk = async (
   chunkNumber: number,
   rows: ChunkRow[],
 ): Promise<void> => {
-  const directory = chunkDirectoryFor(jobId);
   const finalName = `${chunkNumber.toString().padStart(6, '0')}.ndjson`;
   const temporaryName = `.${finalName}.${randomUUID()}.tmp`;
-  const temporaryPath = join(directory, temporaryName);
-  const finalPath = join(directory, finalName);
   const storedPath = join('chunks', jobId, finalName);
+  const temporaryPath = resolveStoragePath(join('chunks', jobId, temporaryName));
+  const finalPath = resolveStoragePath(storedPath);
   const contents = `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`;
 
   try {

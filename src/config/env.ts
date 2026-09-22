@@ -71,6 +71,16 @@ const readRequiredString = (name: string, defaultValue: string): string => {
   return value;
 };
 
+const readHttpBodyLimit = (): string => {
+  const value = readRequiredString('HTTP_BODY_LIMIT', '1mb').toLowerCase();
+
+  if (!/^[1-9]\d*(b|kb|mb)$/.test(value)) {
+    throw new Error('Invalid HTTP_BODY_LIMIT. Expected a value like 1mb, 100kb, or 512b.');
+  }
+
+  return value;
+};
+
 const readRedisUrl = (): string => {
   const value = readRequiredString('REDIS_URL', 'redis://localhost:6379');
 
@@ -109,5 +119,7 @@ export const env = {
   PRODUCT_DETAIL_CACHE_TTL_SECONDS: readPositiveInteger('PRODUCT_DETAIL_CACHE_TTL_SECONDS', '30'),
   PRODUCT_LIST_CACHE_TTL_SECONDS: readPositiveInteger('PRODUCT_LIST_CACHE_TTL_SECONDS', '15'),
   PRODUCT_LIST_CACHE_MAX_PAGE: readPositiveInteger('PRODUCT_LIST_CACHE_MAX_PAGE', '5'),
+  HTTP_BODY_LIMIT: readHttpBodyLimit(),
+  SHUTDOWN_TIMEOUT_SECONDS: readPositiveInteger('SHUTDOWN_TIMEOUT_SECONDS', '10'),
   PRICING_RULE_VERSION: readRequiredString('PRICING_RULE_VERSION', 'v1'),
 } as const;

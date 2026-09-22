@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { prisma } from '../config/prisma.js';
+import { closeSharedResources } from '../config/close-shared-resources.js';
 import { parseImportJobId } from './import.schemas.js';
 import { ChunkProcessingError, processNextImportChunk } from './process-import-chunk.js';
 
@@ -50,5 +50,5 @@ void main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await prisma.$disconnect();
+    await closeSharedResources();
   });

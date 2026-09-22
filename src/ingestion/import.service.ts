@@ -1,8 +1,8 @@
 import { unlink } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
 import { env } from '../config/env.js';
 import { prisma } from '../config/prisma.js';
 import { type Prisma } from '../generated/prisma/client.js';
+import { resolveContainedPath } from './import-storage-path.js';
 import { sanitizeOriginalFileName } from './import.schemas.js';
 
 const importJobSelect = {
@@ -28,19 +28,8 @@ export interface StoredImportFile {
   absolutePath: string;
 }
 
-const assertPathInsideStorage = (filePath: string): string => {
-  const resolvedPath = resolve(filePath);
-  const relativePath = relative(env.IMPORT_STORAGE_PATH, resolvedPath);
-
-  if (relativePath === '' || relativePath.startsWith('..') || isAbsolute(relativePath)) {
-    throw new Error('Stored import path is outside the configured directory');
-  }
-
-  return resolvedPath;
-};
-
 export const removeStoredImportFile = async (filePath: string): Promise<void> => {
-  const safePath = assertPathInsideStorage(filePath);
+  const safePath = resolveContainedPath(env.IMPORT_STORAGE_PATH, filePath);
 
   try {
     await unlink(safePath);

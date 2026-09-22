@@ -1,7 +1,7 @@
 import { createReadStream } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { env } from '../config/env.js';
+import { resolveContainedPath, StoragePathEscapeError } from './import-storage-path.js';
 import {
   applyImportPricingRule,
   assertSupportedPricingRuleVersion,
@@ -17,14 +17,15 @@ import {
 const MAX_STOCK_QUANTITY = 2_147_483_647;
 
 const resolveChunkPath = (storedPath: string): string => {
-  const absolutePath = resolve(env.IMPORT_STORAGE_PATH, storedPath);
-  const relativePath = relative(env.IMPORT_STORAGE_PATH, absolutePath);
+  try {
+    return resolveContainedPath(env.IMPORT_STORAGE_PATH, storedPath);
+  } catch (error) {
+    if (error instanceof StoragePathEscapeError) {
+      throw new ChunkProcessingError('CHUNK_FILE_NOT_FOUND', 'Prepared chunk file is unavailable');
+    }
 
-  if (relativePath === '' || relativePath.startsWith('..') || isAbsolute(relativePath)) {
-    throw new ChunkProcessingError('CHUNK_FILE_NOT_FOUND', 'Prepared chunk file is unavailable');
+    throw error;
   }
-
-  return absolutePath;
 };
 
 const isStringRecord = (value: unknown): value is Record<string, string> => {
