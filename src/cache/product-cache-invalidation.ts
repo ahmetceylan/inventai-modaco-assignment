@@ -1,4 +1,8 @@
-import { categoryPromotionVersionKey, productVersionKey } from './product-cache-keys.js';
+import {
+  categoryPromotionVersionKey,
+  productListVersionKey,
+  productVersionKey,
+} from './product-cache-keys.js';
 import { runRedisOperation } from './redis-client.js';
 
 export interface InvalidationContext {
@@ -10,10 +14,24 @@ export interface ProductCacheInvalidator {
   invalidateProduct: (productId: string) => Promise<void>;
   invalidateCategory: (categoryId: string) => Promise<void>;
   invalidateProducts: (productIds: string[], context?: InvalidationContext) => Promise<void>;
+  invalidateListings: (
+    categoryIds: string[],
+    context?: InvalidationContext,
+  ) => Promise<void>;
+  invalidateIngestion: (
+    productIds: string[],
+    categoryIds: string[],
+    context?: InvalidationContext,
+  ) => Promise<void>;
 }
 
 const logInvalidationFailure = (
-  targetType: 'product' | 'category' | 'product_batch',
+  targetType:
+    | 'product'
+    | 'category'
+    | 'product_batch'
+    | 'product_list'
+    | 'ingestion_cache',
   targetId?: string,
   context: InvalidationContext = {},
 ): void => {
@@ -25,6 +43,28 @@ const logInvalidationFailure = (
       ...context,
     }),
   );
+};
+
+const listingVersionKeys = (categoryIds: string[]): string[] => {
+  return [
+    productListVersionKey({ type: 'global' }),
+    ...[...new Set(categoryIds)].map((categoryId) =>
+      productListVersionKey({ type: 'category', categoryId }),
+    ),
+  ];
+};
+
+const incrementKeys = async (keys: string[]): Promise<boolean> => {
+  const uniqueKeys = [...new Set(keys)];
+  const result = await runRedisOperation(async (client) => {
+    const pipeline = client.multi();
+    for (const key of uniqueKeys) {
+      pipeline.incr(key);
+    }
+    await pipeline.exec();
+  });
+
+  return result.ok;
 };
 
 export const productCacheInvalidator: ProductCacheInvalidator = {
@@ -50,16 +90,27 @@ export const productCacheInvalidator: ProductCacheInvalidator = {
       return;
     }
 
-    const result = await runRedisOperation(async (client) => {
-      const pipeline = client.multi();
-      for (const productId of uniqueProductIds) {
-        pipeline.incr(productVersionKey(productId));
-      }
-      await pipeline.exec();
-    });
-
-    if (!result.ok) {
+    const succeeded = await incrementKeys(uniqueProductIds.map(productVersionKey));
+    if (!succeeded) {
       logInvalidationFailure('product_batch', undefined, context);
+    }
+  },
+
+  async invalidateListings(categoryIds, context = {}) {
+    const succeeded = await incrementKeys(listingVersionKeys(categoryIds));
+    if (!succeeded) {
+      logInvalidationFailure('product_list', undefined, context);
+    }
+  },
+
+  async invalidateIngestion(productIds, categoryIds, context = {}) {
+    const keys = [
+      ...[...new Set(productIds)].map(productVersionKey),
+      ...listingVersionKeys(categoryIds),
+    ];
+    const succeeded = await incrementKeys(keys);
+    if (!succeeded) {
+      logInvalidationFailure('ingestion_cache', undefined, context);
     }
   },
 };

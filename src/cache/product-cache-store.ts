@@ -11,6 +11,14 @@ const SET_IF_VERSIONS_MATCH = `
   return 1
 `;
 
+const SET_IF_VERSION_MATCHES = `
+  if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+    return 0
+  end
+  redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[3])
+  return 1
+`;
+
 export interface VersionedCacheWrite {
   productVersionKey: string;
   productVersion: number;
@@ -27,6 +35,13 @@ export interface ProductCacheStore {
   delete(key: string): Promise<void>;
   initializeVersion(key: string): Promise<void>;
   setIfVersionsMatch(write: VersionedCacheWrite): Promise<boolean>;
+  setIfVersionMatches(write: {
+    versionKey: string;
+    version: number;
+    cacheKey: string;
+    payload: string;
+    ttlSeconds: number;
+  }): Promise<boolean>;
 }
 
 class RedisUnavailableError extends Error {}
@@ -67,6 +82,19 @@ export const redisProductCacheStore: ProductCacheStore = {
             write.payload,
             String(write.ttlSeconds),
           ],
+        }),
+      ),
+    );
+
+    return result === 1;
+  },
+
+  async setIfVersionMatches(write) {
+    const result = valueOrThrow(
+      await runRedisOperation((client) =>
+        client.eval(SET_IF_VERSION_MATCHES, {
+          keys: [write.versionKey, write.cacheKey],
+          arguments: [String(write.version), write.payload, String(write.ttlSeconds)],
         }),
       ),
     );

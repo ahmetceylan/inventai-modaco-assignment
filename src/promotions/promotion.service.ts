@@ -65,7 +65,7 @@ export const assignPromotion = async (
             promotion.productId === null);
 
         if (sameTarget) {
-          return { promotion, changed: false };
+          return { promotion, changed: false as const };
         }
 
         if (promotion.productId !== null || promotion.categoryId !== null) {
@@ -76,7 +76,7 @@ export const assignPromotion = async (
           );
         }
 
-        await assertTargetExists(transaction, target);
+        const targetCategoryId = await assertTargetExists(transaction, target);
 
         const overlap = await transaction.promotion.findFirst({
           where: {
@@ -98,11 +98,19 @@ export const assignPromotion = async (
           data: target.type === 'PRODUCT' ? { productId: target.id } : { categoryId: target.id },
           select: promotionSelect,
         });
-        return { promotion: assigned, changed: true };
+        return {
+          promotion: assigned,
+          changed: true as const,
+          targetCategoryId,
+        };
       });
 
       if (result.changed) {
-        await invalidatePromotionTarget(cacheInvalidator, target);
+        await invalidatePromotionTarget(
+          cacheInvalidator,
+          target,
+          result.targetCategoryId,
+        );
       }
       return result.promotion;
     } catch (error) {
@@ -138,7 +146,7 @@ export const cancelPromotion = async (
     }
 
     if (promotion.cancelledAt !== null) {
-      return { promotion, changed: false };
+      return { promotion, changed: false as const };
     }
 
     const updated = await transaction.promotion.updateMany({
@@ -160,7 +168,25 @@ export const cancelPromotion = async (
       throw new HttpError(404, 'PROMOTION_NOT_FOUND', 'Promotion not found');
     }
 
-    return { promotion: cancelled, changed: updated.count === 1 };
+    if (updated.count !== 1) {
+      return { promotion: cancelled, changed: false as const };
+    }
+
+    const targetCategoryId =
+      promotion.productId === null
+        ? promotion.categoryId
+        : (
+            await transaction.product.findUniqueOrThrow({
+              where: { id: promotion.productId },
+              select: { categoryId: true },
+            })
+          ).categoryId;
+
+    return {
+      promotion: cancelled,
+      changed: true as const,
+      targetCategoryId,
+    };
   });
 
   if (result.changed) {
@@ -171,8 +197,12 @@ export const cancelPromotion = async (
           : { type: 'CATEGORY' as const, id: result.promotion.categoryId }
         : { type: 'PRODUCT' as const, id: result.promotion.productId };
 
-    if (target !== null) {
-      await invalidatePromotionTarget(cacheInvalidator, target);
+    if (target !== null && result.targetCategoryId !== null) {
+      await invalidatePromotionTarget(
+        cacheInvalidator,
+        target,
+        result.targetCategoryId,
+      );
     }
   }
 
@@ -182,6 +212,7 @@ export const cancelPromotion = async (
 const invalidatePromotionTarget = async (
   cacheInvalidator: ProductCacheInvalidator,
   target: PromotionTarget,
+  categoryId: string,
 ): Promise<void> => {
   try {
     if (target.type === 'PRODUCT') {
@@ -198,23 +229,36 @@ const invalidatePromotionTarget = async (
       }),
     );
   }
+
+  try {
+    await cacheInvalidator.invalidateListings([categoryId]);
+  } catch {
+    console.error(
+      JSON.stringify({
+        event: 'product_list_cache_invalidation_failed',
+        targetType: target.type.toLowerCase(),
+        targetId: target.id,
+        categoryId,
+      }),
+    );
+  }
 };
 
 const assertTargetExists = async (
   transaction: Prisma.TransactionClient,
   target: PromotionTarget,
-): Promise<void> => {
+): Promise<string> => {
   if (target.type === 'PRODUCT') {
     const product = await transaction.product.findUnique({
       where: { id: target.id },
-      select: { id: true },
+      select: { categoryId: true },
     });
 
     if (product === null) {
       throw new HttpError(404, 'PRODUCT_NOT_FOUND', 'Product not found');
     }
 
-    return;
+    return product.categoryId;
   }
 
   const category = await transaction.category.findUnique({
@@ -225,6 +269,8 @@ const assertTargetExists = async (
   if (category === null) {
     throw new HttpError(404, 'CATEGORY_NOT_FOUND', 'Category not found');
   }
+
+  return category.id;
 };
 
 const promotionConflictError = (): HttpError => {

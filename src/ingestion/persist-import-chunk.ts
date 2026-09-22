@@ -19,6 +19,12 @@ type Transaction = Prisma.TransactionClient;
 interface PersistenceResult {
   jobStatus: ImportJobStatus | null;
   productIds: string[];
+  categoryIds: string[];
+}
+
+interface UpsertedProducts {
+  productIds: string[];
+  categoryIds: string[];
 }
 
 const ownershipWhere = (chunk: ClaimedImportChunk) => {
@@ -94,11 +100,16 @@ const upsertProducts = async (
   transaction: Transaction,
   rows: ValidProductRow[],
   categoryIds: Map<string, string>,
-): Promise<string[]> => {
+): Promise<UpsertedProducts> => {
   if (rows.length === 0) {
-    return [];
+    return { productIds: [], categoryIds: [] };
   }
 
+  const skus = rows.map(({ sku }) => sku);
+  const previousProducts = await transaction.product.findMany({
+    where: { sku: { in: skus } },
+    select: { categoryId: true },
+  });
   const values = rows.map((row) => {
     const categoryId = categoryIds.get(row.category);
 
@@ -141,10 +152,18 @@ const upsertProducts = async (
   `;
 
   const products = await transaction.product.findMany({
-    where: { sku: { in: rows.map(({ sku }) => sku) } },
-    select: { id: true },
+    where: { sku: { in: skus } },
+    select: { id: true, categoryId: true },
   });
-  return products.map(({ id }) => id);
+  return {
+    productIds: products.map(({ id }) => id),
+    categoryIds: [
+      ...new Set([
+        ...previousProducts.map(({ categoryId }) => categoryId),
+        ...products.map(({ categoryId }) => categoryId),
+      ]),
+    ],
+  };
 };
 
 const saveInvalidRows = async (
@@ -251,28 +270,36 @@ export const persistProcessedChunk = async (
       await lockProcessableImportJob(transaction, chunk.importJobId);
 
       const categoryIds = await resolveCategoryIds(transaction, rows.validRows);
-      const productIds = await upsertProducts(transaction, rows.validRows, categoryIds);
+      const upsertedProducts = await upsertProducts(
+        transaction,
+        rows.validRows,
+        categoryIds,
+      );
       await saveInvalidRows(transaction, chunk, rows);
       await completeChunk(transaction, chunk, now);
 
       return {
         jobStatus: await updateImportJobProgress(transaction, chunk, rows, now),
-        productIds,
+        ...upsertedProducts,
       };
     },
     { timeout: 30_000 },
   );
 
   try {
-    await cacheInvalidator.invalidateProducts(result.productIds, {
-      jobId: chunk.importJobId,
-      chunkId: chunk.id,
-    });
+    await cacheInvalidator.invalidateIngestion(
+      result.productIds,
+      result.categoryIds,
+      {
+        jobId: chunk.importJobId,
+        chunkId: chunk.id,
+      },
+    );
   } catch {
     console.error(
       JSON.stringify({
         event: 'product_cache_invalidation_failed',
-        targetType: 'product_batch',
+        targetType: 'ingestion_cache',
         jobId: chunk.importJobId,
         chunkId: chunk.id,
       }),
