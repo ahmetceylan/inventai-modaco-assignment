@@ -12,6 +12,22 @@ enum DiscountType {
   FIXED
 }
 
+enum ImportJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+  FAILED
+  CANCELLED
+}
+
+enum ImportChunkStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 model Category {
   id         String      @id @default(uuid()) @db.Uuid
   name       String      @unique
@@ -53,4 +69,65 @@ model Promotion {
 
   @@index([productId])
   @@index([categoryId])
+}
+
+model ImportJob {
+  id                 String          @id @default(uuid()) @db.Uuid
+  originalFileName   String
+  storagePath        String
+  fileChecksum       String?
+  status             ImportJobStatus @default(PENDING)
+  totalRows          Int?
+  processedRows      Int             @default(0)
+  succeededRows      Int             @default(0)
+  failedRows         Int             @default(0)
+  pricingRuleVersion String
+  createdAt          DateTime        @default(now()) @db.Timestamptz(3)
+  startedAt          DateTime?       @db.Timestamptz(3)
+  completedAt        DateTime?       @db.Timestamptz(3)
+  updatedAt          DateTime        @updatedAt @db.Timestamptz(3)
+  chunks             ImportChunk[]
+  failures           ImportFailure[]
+
+  @@index([status])
+}
+
+model ImportChunk {
+  id             String            @id @default(uuid()) @db.Uuid
+  importJobId    String            @db.Uuid
+  chunkNumber    Int
+  storagePath    String
+  startRowNumber Int
+  rowCount       Int
+  status         ImportChunkStatus @default(PENDING)
+  attemptCount   Int               @default(0)
+  availableAt    DateTime          @default(now()) @db.Timestamptz(3)
+  lockedAt       DateTime?         @db.Timestamptz(3)
+  lockedBy       String?
+  lastError      String?
+  createdAt      DateTime          @default(now()) @db.Timestamptz(3)
+  completedAt    DateTime?         @db.Timestamptz(3)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(3)
+  importJob      ImportJob         @relation(fields: [importJobId], references: [id], onDelete: Cascade)
+  failures       ImportFailure[]
+
+  @@unique([importJobId, chunkNumber])
+  @@index([status, availableAt])
+}
+
+model ImportFailure {
+  id            String       @id @default(uuid()) @db.Uuid
+  importJobId   String       @db.Uuid
+  importChunkId String?      @db.Uuid
+  rowNumber     Int?
+  sku           String?
+  rawData       Json?
+  errorCode     String
+  errorMessage  String
+  createdAt     DateTime     @default(now()) @db.Timestamptz(3)
+  importJob     ImportJob    @relation(fields: [importJobId], references: [id], onDelete: Cascade)
+  importChunk   ImportChunk? @relation(fields: [importChunkId], references: [id], onDelete: SetNull)
+
+  @@index([importJobId])
+  @@index([importChunkId])
 }
