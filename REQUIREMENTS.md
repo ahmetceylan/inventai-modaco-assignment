@@ -317,9 +317,9 @@ Minimum behavioral acceptance examples:
 | A-07 | Money uses decimal-safe storage/arithmetic | Proposed | Schema / `ADR.md` |
 | A-08 | Vendor duplicate/upsert semantics | Open business decision | Ingestion contract / `ADR.md` |
 | A-09 | Invalid-row policy: partial success vs whole-file rejection | Open business decision | Ingestion contract / `ADR.md` |
-| A-10 | Required price/cache consistency window | Open business decision | `ADR.md` / SLA |
+| A-10 | Product detail and bounded listing caches use bounded eventual consistency with TTL-defined stale windows | Selected assumption | `README.md` / incremental ADR notes |
 | A-11 | Pagination style: offset or cursor/keyset | Open architecture decision | `ADR.md` / API contract |
-| A-12 | Authentication/authorization implementation scope | Open scope decision | `README.md` / `ADR.md` |
+| A-12 | Authentication/authorization implementation scope | Selected: excluded from the case-study implementation; production must add authn/authz around management and ingestion endpoints | `README.md` / incremental ADR notes |
 
 ## 13. Deliberately deferred architecture decisions
 
