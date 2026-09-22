@@ -1,6 +1,12 @@
 import request from 'supertest';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
+import {
+  categoryPromotionVersionKey,
+  productDetailCacheKey,
+  productVersionKey,
+} from '../src/cache/product-cache-keys.js';
+import { runRedisOperation } from '../src/cache/redis-client.js';
 import { prisma } from '../src/config/prisma.js';
 import { DiscountType } from '../src/generated/prisma/client.js';
 
@@ -130,6 +136,15 @@ describe('Product read endpoints', () => {
   const app = createApp();
 
   beforeEach(async () => {
+    await runRedisOperation((client) =>
+      client.del([
+        ...Object.values(productIds).flatMap((id) => [
+          productDetailCacheKey(id),
+          productVersionKey(id),
+        ]),
+        ...Object.values(categoryIds).map(categoryPromotionVersionKey),
+      ]),
+    );
     await clearCatalog();
     await seedCatalog();
   });

@@ -6,6 +6,7 @@ import request from 'supertest';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ImportChunkStatus, ImportJobStatus, type Prisma } from '../src/generated/prisma/client.js';
 import { type prisma as PrismaClientInstance } from '../src/config/prisma.js';
+import type { ProductCacheInvalidator } from '../src/cache/product-cache-invalidation.js';
 import type { ImportRetryPolicy } from '../src/ingestion/import-chunk-retry.js';
 
 interface VendorData {
@@ -483,6 +484,53 @@ describe('Prepared Product chunk processing', () => {
     });
     expect(product.basePrice.toFixed(2)).toBe('25.50');
     await expect(prisma.product.count({ where: { sku: 'SKU-1' } })).resolves.toBe(1);
+  });
+
+  it('invalidates affected Product versions only after the chunk transaction commits', async () => {
+    const job = await createJob({ totalRows: 2 });
+    const chunk = await createChunk(job.id, 0, [
+      validRow(2, { sku: 'CACHE-SKU-1' }),
+      validRow(3, { sku: 'CACHE-SKU-2' }),
+    ]);
+    const claimed = await processor.claimPendingImportChunk(job.id);
+    const rows = await reader.readChunkRows(claimed!);
+    const invalidator: ProductCacheInvalidator = {
+      invalidateProduct: vi.fn(() => Promise.resolve()),
+      invalidateCategory: vi.fn(() => Promise.resolve()),
+      invalidateProducts: vi.fn(async (productIds) => {
+        expect(productIds).toHaveLength(2);
+        await expect(
+          prisma.importChunk.findUniqueOrThrow({ where: { id: chunk.id } }),
+        ).resolves.toMatchObject({ status: ImportChunkStatus.COMPLETED });
+      }),
+    };
+
+    await persistence.persistProcessedChunk(claimed!, rows, new Date(), invalidator);
+
+    expect(invalidator.invalidateProducts).toHaveBeenCalledTimes(1);
+    expect(invalidator.invalidateProduct).not.toHaveBeenCalled();
+  });
+
+  it('does not roll back a completed chunk when cache invalidation fails', async () => {
+    const job = await createJob({ totalRows: 1 });
+    const chunk = await createChunk(job.id, 0, [validRow(2, { sku: 'CACHE-FAIL-SKU' })]);
+    const claimed = await processor.claimPendingImportChunk(job.id);
+    const rows = await reader.readChunkRows(claimed!);
+    const invalidator: ProductCacheInvalidator = {
+      invalidateProduct: vi.fn(() => Promise.resolve()),
+      invalidateCategory: vi.fn(() => Promise.resolve()),
+      invalidateProducts: vi.fn(() => Promise.reject(new Error('Redis unavailable'))),
+    };
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      persistence.persistProcessedChunk(claimed!, rows, new Date(), invalidator),
+    ).resolves.toBeUndefined();
+
+    await expect(
+      prisma.importChunk.findUniqueOrThrow({ where: { id: chunk.id } }),
+    ).resolves.toMatchObject({ status: ImportChunkStatus.COMPLETED });
+    await expect(prisma.product.count({ where: { sku: 'CACHE-FAIL-SKU' } })).resolves.toBe(1);
   });
 
   it('creates one Category for multiple valid rows that share it', async () => {
