@@ -24,17 +24,17 @@ export const promotionSelect = {
 
 export type PromotionRecord = Prisma.PromotionGetPayload<{ select: typeof promotionSelect }>;
 
-export function createPromotion(input: CreatePromotionInput): Promise<PromotionRecord> {
+export const createPromotion = (input: CreatePromotionInput): Promise<PromotionRecord> => {
   return prisma.promotion.create({
     data: input,
     select: promotionSelect,
   });
-}
+};
 
-export async function assignPromotion(
+export const assignPromotion = async (
   promotionId: string,
   target: PromotionTarget,
-): Promise<PromotionRecord> {
+): Promise<PromotionRecord> => {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       return await prisma.$transaction(async (transaction) => {
@@ -110,9 +110,9 @@ export async function assignPromotion(
   }
 
   throw new Error('Promotion assignment retry exhausted');
-}
+};
 
-export async function cancelPromotion(promotionId: string): Promise<PromotionRecord> {
+export const cancelPromotion = async (promotionId: string): Promise<PromotionRecord> => {
   return prisma.$transaction(async (transaction) => {
     const promotion = await transaction.promotion.findUnique({
       where: { id: promotionId },
@@ -148,12 +148,12 @@ export async function cancelPromotion(promotionId: string): Promise<PromotionRec
 
     return cancelled;
   });
-}
+};
 
-async function assertTargetExists(
+const assertTargetExists = async (
   transaction: Prisma.TransactionClient,
   target: PromotionTarget,
-): Promise<void> {
+): Promise<void> => {
   if (target.type === 'PRODUCT') {
     const product = await transaction.product.findUnique({
       where: { id: target.id },
@@ -175,17 +175,17 @@ async function assertTargetExists(
   if (category === null) {
     throw new HttpError(404, 'CATEGORY_NOT_FOUND', 'Category not found');
   }
-}
+};
 
-function promotionConflictError(): HttpError {
+const promotionConflictError = (): HttpError => {
   return new HttpError(
     409,
     'PROMOTION_CONFLICT',
     'Promotion overlaps another promotion at the same target',
   );
-}
+};
 
-function isPromotionOverlapConstraintError(error: unknown): boolean {
+const isPromotionOverlapConstraintError = (error: unknown): boolean => {
   if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2039') {
     return false;
   }
@@ -206,8 +206,8 @@ function isPromotionOverlapConstraintError(error: unknown): boolean {
   }
 
   return overlapConstraintNames.some((name) => message.includes(`exclusion constraint "${name}"`));
-}
+};
 
-function isPrismaWriteConflict(error: unknown): boolean {
+const isPrismaWriteConflict = (error: unknown): boolean => {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034';
-}
+};

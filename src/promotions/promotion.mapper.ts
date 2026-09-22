@@ -13,7 +13,7 @@ export interface PromotionResponse {
   updatedAt: string;
 }
 
-export function mapPromotion(promotion: PromotionRecord): PromotionResponse {
+export const mapPromotion = (promotion: PromotionRecord): PromotionResponse => {
   const target =
     promotion.productId !== null
       ? { type: 'PRODUCT' as const, id: promotion.productId }
@@ -33,4 +33,4 @@ export function mapPromotion(promotion: PromotionRecord): PromotionResponse {
     createdAt: promotion.createdAt.toISOString(),
     updatedAt: promotion.updatedAt.toISOString(),
   };
-}
+};

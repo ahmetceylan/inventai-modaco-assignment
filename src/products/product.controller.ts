@@ -4,7 +4,7 @@ import { mapProduct } from './product.mapper.js';
 import { parseProductId, parseProductListQuery } from './product.schemas.js';
 import { getProductById, listProducts } from './product.service.js';
 
-export async function listProductController(req: Request, res: Response): Promise<void> {
+export const listProductController = async (req: Request, res: Response): Promise<void> => {
   const query = parseProductListQuery(req.query);
   const evaluationTime = new Date(Date.now());
   const result = await listProducts(query, evaluationTime);
@@ -18,9 +18,9 @@ export async function listProductController(req: Request, res: Response): Promis
       totalPages: Math.ceil(result.totalItems / query.pageSize),
     },
   });
-}
+};
 
-export async function getProductController(req: Request, res: Response): Promise<void> {
+export const getProductController = async (req: Request, res: Response): Promise<void> => {
   const id = parseProductId(req.params.id);
   const evaluationTime = new Date(Date.now());
   const product = await getProductById(id, evaluationTime);
@@ -30,4 +30,4 @@ export async function getProductController(req: Request, res: Response): Promise
   }
 
   res.status(200).json({ data: mapProduct(product) });
-}
+};

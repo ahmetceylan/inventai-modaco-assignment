@@ -5,7 +5,7 @@ import { productRouter } from './products/product.routes.js';
 import { promotionRouter } from './promotions/promotion.routes.js';
 import { healthRouter } from './routes/health.js';
 
-export function createApp(): Express {
+export const createApp = (): Express => {
   const app = express();
 
   app.use(helmet());
@@ -58,4 +58,4 @@ export function createApp(): Express {
   });
 
   return app;
-}
+};

@@ -15,7 +15,7 @@ export interface ProductResponse {
   updatedAt: string;
 }
 
-export function mapProduct(product: PricedProductRecord): ProductResponse {
+export const mapProduct = (product: PricedProductRecord): ProductResponse => {
   return {
     id: product.id,
     name: product.name,
@@ -27,4 +27,4 @@ export function mapProduct(product: PricedProductRecord): ProductResponse {
     createdAt: product.createdAt.toISOString(),
     updatedAt: product.updatedAt.toISOString(),
   };
-}
+};

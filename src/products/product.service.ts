@@ -50,10 +50,10 @@ const categoryPromotionSelect = {
   categoryId: true,
 } satisfies Prisma.PromotionSelect;
 
-export async function listProducts(
+export const listProducts = async (
   query: ProductListQuery,
   evaluationTime: Date,
-): Promise<ProductPage> {
+): Promise<ProductPage> => {
   const where: Prisma.ProductWhereInput =
     query.categoryId === undefined ? {} : { categoryId: query.categoryId };
 
@@ -90,12 +90,12 @@ export async function listProducts(
     products: await enrichProductsWithPricing(products, evaluationTime),
     totalItems,
   };
-}
+};
 
-export async function getProductById(
+export const getProductById = async (
   id: string,
   evaluationTime: Date,
-): Promise<PricedProductRecord | null> {
+): Promise<PricedProductRecord | null> => {
   const product = await prisma.product.findUnique({
     where: { id },
     select: productSelect,
@@ -107,12 +107,12 @@ export async function getProductById(
 
   const [pricedProduct] = await enrichProductsWithPricing([product], evaluationTime);
   return pricedProduct ?? null;
-}
+};
 
-async function enrichProductsWithPricing(
+const enrichProductsWithPricing = async (
   products: ProductRecord[],
   evaluationTime: Date,
-): Promise<PricedProductRecord[]> {
+): Promise<PricedProductRecord[]> => {
   if (products.length === 0) {
     return [];
   }
@@ -173,4 +173,4 @@ async function enrichProductsWithPricing(
       effectivePrice: calculateEffectivePrice(product.basePrice, promotion),
     };
   });
-}
+};

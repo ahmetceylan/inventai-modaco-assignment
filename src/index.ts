@@ -8,7 +8,7 @@ const server = app.listen(env.PORT, () => {
   console.log(`Server listening on port ${env.PORT}`);
 });
 
-function shutdown(signal: string): void {
+const shutdown = (signal: string): void => {
   console.log(`Received ${signal}, shutting down`);
   server.close((closeError) => {
     if (closeError) {
@@ -19,7 +19,7 @@ function shutdown(signal: string): void {
 
     process.exit(0);
   });
-}
+};
 
 process.on('SIGTERM', () => {
   shutdown('SIGTERM');

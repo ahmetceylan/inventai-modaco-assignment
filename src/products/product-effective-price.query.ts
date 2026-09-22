@@ -23,13 +23,13 @@ export interface EffectivePriceQuery {
   limit: number;
 }
 
-export function queryProductsByEffectivePrice({
+export const queryProductsByEffectivePrice = ({
   categoryId,
   order,
   evaluationTime,
   offset,
   limit,
-}: EffectivePriceQuery): Prisma.PrismaPromise<EffectivePriceRow[]> {
+}: EffectivePriceQuery): Prisma.PrismaPromise<EffectivePriceRow[]> => {
   const categoryFilter =
     categoryId === undefined
       ? Prisma.empty
@@ -103,9 +103,9 @@ export function queryProductsByEffectivePrice({
     OFFSET ${offset}
     LIMIT ${limit}
   `;
-}
+};
 
-export function mapEffectivePriceRows(rows: EffectivePriceRow[]): PricedProductRecord[] {
+export const mapEffectivePriceRows = (rows: EffectivePriceRow[]): PricedProductRecord[] => {
   return rows.map((row) => ({
     id: row.id,
     name: row.name,
@@ -120,8 +120,8 @@ export function mapEffectivePriceRows(rows: EffectivePriceRow[]): PricedProductR
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }));
-}
+};
 
-function toDecimal(value: Prisma.Decimal | string): Prisma.Decimal {
+const toDecimal = (value: Prisma.Decimal | string): Prisma.Decimal => {
   return value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
-}
+};

@@ -2,11 +2,11 @@ const NODE_ENV_VALUES = ['development', 'test', 'production'] as const;
 
 type NodeEnv = (typeof NODE_ENV_VALUES)[number];
 
-function isNodeEnv(value: string): value is NodeEnv {
+const isNodeEnv = (value: string): value is NodeEnv => {
   return (NODE_ENV_VALUES as readonly string[]).includes(value);
-}
+};
 
-function readNodeEnv(): NodeEnv {
+const readNodeEnv = (): NodeEnv => {
   const value = process.env.NODE_ENV ?? 'development';
 
   if (!isNodeEnv(value)) {
@@ -14,9 +14,9 @@ function readNodeEnv(): NodeEnv {
   }
 
   return value;
-}
+};
 
-function readPort(): number {
+const readPort = (): number => {
   const raw = process.env.PORT ?? '3000';
   const port = Number(raw);
 
@@ -25,7 +25,7 @@ function readPort(): number {
   }
 
   return port;
-}
+};
 
 export const env = {
   NODE_ENV: readNodeEnv(),

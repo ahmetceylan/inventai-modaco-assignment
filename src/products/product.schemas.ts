@@ -10,7 +10,7 @@ export interface ProductListQuery {
   order?: 'asc' | 'desc';
 }
 
-function parsePositiveInteger(value: unknown, field: string, defaultValue: number): number {
+const parsePositiveInteger = (value: unknown, field: string, defaultValue: number): number => {
   if (value === undefined) {
     return defaultValue;
   }
@@ -26,9 +26,9 @@ function parsePositiveInteger(value: unknown, field: string, defaultValue: numbe
   }
 
   return parsed;
-}
+};
 
-export function parseProductListQuery(query: Record<string, unknown>): ProductListQuery {
+export const parseProductListQuery = (query: Record<string, unknown>): ProductListQuery => {
   const page = parsePositiveInteger(query.page, 'page', 1);
   const pageSize = parsePositiveInteger(query.pageSize, 'pageSize', 20);
 
@@ -70,12 +70,12 @@ export function parseProductListQuery(query: Record<string, unknown>): ProductLi
     ...(categoryId === undefined ? {} : { categoryId }),
     ...(sort === 'effectivePrice' ? { sort, order: order ?? 'asc' } : {}),
   };
-}
+};
 
-export function parseProductId(id: unknown): string {
+export const parseProductId = (id: unknown): string => {
   if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
     throw validationError([{ field: 'id', message: 'Must be a valid UUID' }]);
   }
 
   return id;
-}
+};

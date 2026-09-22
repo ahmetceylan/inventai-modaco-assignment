@@ -33,4 +33,11 @@ export default tseslint.config(
     files: ['eslint.config.js'],
     extends: [tseslint.configs.disableTypeChecked],
   },
+  {
+    files: ['src/**/*.ts'],
+    ignores: ['src/generated/**'],
+    rules: {
+      'func-style': ['error', 'expression'],
+    },
+  },
 );

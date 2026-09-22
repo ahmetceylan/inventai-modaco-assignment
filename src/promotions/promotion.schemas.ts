@@ -16,11 +16,15 @@ export interface CreatePromotionInput {
 
 export type PromotionTarget = { type: 'PRODUCT'; id: string } | { type: 'CATEGORY'; id: string };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+const isRecord = (value: unknown): value is Record<string, unknown> => {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+};
 
-function parseTimestamp(value: unknown, field: string, details: ErrorDetail[]): Date | undefined {
+const parseTimestamp = (
+  value: unknown,
+  field: string,
+  details: ErrorDetail[],
+): Date | undefined => {
   if (typeof value !== 'string') {
     details.push({ field, message: 'Must be a valid timestamp with an explicit timezone' });
     return undefined;
@@ -61,13 +65,13 @@ function parseTimestamp(value: unknown, field: string, details: ErrorDetail[]): 
   }
 
   return parsed;
-}
+};
 
-function parseValue(
+const parseValue = (
   value: unknown,
   discountType: DiscountType | undefined,
   details: ErrorDetail[],
-): Prisma.Decimal | undefined {
+): Prisma.Decimal | undefined => {
   if (typeof value !== 'string' || !DECIMAL_PATTERN.test(value)) {
     details.push({
       field: 'value',
@@ -87,9 +91,9 @@ function parseValue(
   }
 
   return decimal;
-}
+};
 
-export function parseCreatePromotionBody(body: unknown): CreatePromotionInput {
+export const parseCreatePromotionBody = (body: unknown): CreatePromotionInput => {
   if (!isRecord(body)) {
     throw validationError([{ field: 'body', message: 'Must be a JSON object' }]);
   }
@@ -137,9 +141,9 @@ export function parseCreatePromotionBody(body: unknown): CreatePromotionInput {
   }
 
   return { name, discountType, value, startAt, endAt };
-}
+};
 
-export function parsePromotionTarget(body: unknown): PromotionTarget {
+export const parsePromotionTarget = (body: unknown): PromotionTarget => {
   if (!isRecord(body)) {
     throw validationError([{ field: 'body', message: 'Must be a JSON object' }]);
   }
@@ -162,16 +166,16 @@ export function parsePromotionTarget(body: unknown): PromotionTarget {
   }
 
   return { type: 'CATEGORY', id: parseUuid(body.categoryId, 'categoryId') };
-}
+};
 
-export function parsePromotionId(value: unknown): string {
+export const parsePromotionId = (value: unknown): string => {
   return parseUuid(value, 'id');
-}
+};
 
-function parseUuid(value: unknown, field: string): string {
+const parseUuid = (value: unknown, field: string): string => {
   if (typeof value !== 'string' || !UUID_PATTERN.test(value)) {
     throw validationError([{ field, message: 'Must be a valid UUID' }]);
   }
 
   return value;
-}
+};

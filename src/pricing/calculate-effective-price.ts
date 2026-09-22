@@ -5,10 +5,10 @@ export interface PricePromotion {
   value: Prisma.Decimal;
 }
 
-export function calculateEffectivePrice(
+export const calculateEffectivePrice = (
   basePrice: Prisma.Decimal,
   promotion: PricePromotion | null,
-): Prisma.Decimal {
+): Prisma.Decimal => {
   if (promotion === null) {
     return basePrice.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
   }
@@ -20,4 +20,4 @@ export function calculateEffectivePrice(
   const nonNegative = discounted.isNegative() ? new Prisma.Decimal(0) : discounted;
 
   return nonNegative.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
-}
+};
