@@ -22,14 +22,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseTimestamp(value: unknown, field: string, details: ErrorDetail[]): Date | undefined {
   if (typeof value !== 'string') {
-    details.push({ field, message: 'Must be an ISO 8601 timestamp with an explicit timezone' });
+    details.push({ field, message: 'Must be a valid timestamp with an explicit timezone' });
     return undefined;
   }
 
   const match = TIMESTAMP_PATTERN.exec(value);
 
   if (match === null) {
-    details.push({ field, message: 'Must be an ISO 8601 timestamp with an explicit timezone' });
+    details.push({ field, message: 'Must be a valid timestamp with an explicit timezone' });
     return undefined;
   }
 
@@ -56,7 +56,7 @@ function parseTimestamp(value: unknown, field: string, details: ErrorDetail[]): 
   const parsed = new Date(value);
 
   if (!hasValidComponents || !hasValidOffset || Number.isNaN(parsed.getTime())) {
-    details.push({ field, message: 'Must be a valid ISO 8601 timestamp' });
+    details.push({ field, message: 'Must be a valid timestamp' });
     return undefined;
   }
 

@@ -1,7 +1,12 @@
 import { prisma } from '../config/prisma.js';
-import { type Prisma } from '../generated/prisma/client.js';
+import { Prisma } from '../generated/prisma/client.js';
 import { HttpError } from '../http/errors.js';
 import { type CreatePromotionInput, type PromotionTarget } from './promotion.schemas.js';
+
+const overlapConstraintNames = [
+  'no_overlapping_product_promotions',
+  'no_overlapping_category_promotions',
+] as const;
 
 export const promotionSelect = {
   id: true,
@@ -30,70 +35,81 @@ export async function assignPromotion(
   promotionId: string,
   target: PromotionTarget,
 ): Promise<PromotionRecord> {
-  return prisma.$transaction(async (transaction) => {
-    const promotion = await transaction.promotion.findUnique({
-      where: { id: promotionId },
-      select: promotionSelect,
-    });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await prisma.$transaction(async (transaction) => {
+        const promotion = await transaction.promotion.findUnique({
+          where: { id: promotionId },
+          select: promotionSelect,
+        });
 
-    if (promotion === null) {
-      throw new HttpError(404, 'PROMOTION_NOT_FOUND', 'Promotion not found');
+        if (promotion === null) {
+          throw new HttpError(404, 'PROMOTION_NOT_FOUND', 'Promotion not found');
+        }
+
+        if (promotion.cancelledAt !== null) {
+          throw new HttpError(409, 'PROMOTION_CANCELLED', 'Cancelled promotion cannot be assigned');
+        }
+
+        const sameTarget =
+          (target.type === 'PRODUCT' &&
+            promotion.productId === target.id &&
+            promotion.categoryId === null) ||
+          (target.type === 'CATEGORY' &&
+            promotion.categoryId === target.id &&
+            promotion.productId === null);
+
+        if (sameTarget) {
+          return promotion;
+        }
+
+        if (promotion.productId !== null || promotion.categoryId !== null) {
+          throw new HttpError(
+            409,
+            'PROMOTION_ALREADY_ASSIGNED',
+            'Promotion is already assigned to a different target',
+          );
+        }
+
+        await assertTargetExists(transaction, target);
+
+        const overlap = await transaction.promotion.findFirst({
+          where: {
+            id: { not: promotion.id },
+            cancelledAt: null,
+            startAt: { lt: promotion.endAt },
+            endAt: { gt: promotion.startAt },
+            ...(target.type === 'PRODUCT' ? { productId: target.id } : { categoryId: target.id }),
+          },
+          select: { id: true },
+        });
+
+        if (overlap !== null) {
+          throw promotionConflictError();
+        }
+
+        return transaction.promotion.update({
+          where: { id: promotion.id },
+          data: target.type === 'PRODUCT' ? { productId: target.id } : { categoryId: target.id },
+          select: promotionSelect,
+        });
+      });
+    } catch (error) {
+      if (isPromotionOverlapConstraintError(error)) {
+        throw promotionConflictError();
+      }
+
+      // Simultaneous GiST exclusion checks can deadlock. Retry the complete small
+      // transaction once so the winner becomes visible to the overlap pre-check.
+      if (attempt === 0 && isPrismaWriteConflict(error)) {
+        continue;
+      }
+
+      throw error;
     }
+  }
 
-    if (promotion.cancelledAt !== null) {
-      throw new HttpError(409, 'PROMOTION_CANCELLED', 'Cancelled promotion cannot be assigned');
-    }
-
-    const sameTarget =
-      (target.type === 'PRODUCT' &&
-        promotion.productId === target.id &&
-        promotion.categoryId === null) ||
-      (target.type === 'CATEGORY' &&
-        promotion.categoryId === target.id &&
-        promotion.productId === null);
-
-    if (sameTarget) {
-      return promotion;
-    }
-
-    if (promotion.productId !== null || promotion.categoryId !== null) {
-      throw new HttpError(
-        409,
-        'PROMOTION_ALREADY_ASSIGNED',
-        'Promotion is already assigned to a different target',
-      );
-    }
-
-    await assertTargetExists(transaction, target);
-
-    // This transaction narrows the race window but does not prevent two concurrent
-    // assignments from passing the overlap check. A later PostgreSQL exclusion
-    // constraint will enforce this invariant atomically.
-    const overlap = await transaction.promotion.findFirst({
-      where: {
-        id: { not: promotion.id },
-        cancelledAt: null,
-        startAt: { lt: promotion.endAt },
-        endAt: { gt: promotion.startAt },
-        ...(target.type === 'PRODUCT' ? { productId: target.id } : { categoryId: target.id }),
-      },
-      select: { id: true },
-    });
-
-    if (overlap !== null) {
-      throw new HttpError(
-        409,
-        'PROMOTION_CONFLICT',
-        'Promotion overlaps another promotion at the same target',
-      );
-    }
-
-    return transaction.promotion.update({
-      where: { id: promotion.id },
-      data: target.type === 'PRODUCT' ? { productId: target.id } : { categoryId: target.id },
-      select: promotionSelect,
-    });
-  });
+  throw new Error('Promotion assignment retry exhausted');
 }
 
 export async function cancelPromotion(promotionId: string): Promise<PromotionRecord> {
@@ -159,4 +175,39 @@ async function assertTargetExists(
   if (category === null) {
     throw new HttpError(404, 'CATEGORY_NOT_FOUND', 'Category not found');
   }
+}
+
+function promotionConflictError(): HttpError {
+  return new HttpError(
+    409,
+    'PROMOTION_CONFLICT',
+    'Promotion overlaps another promotion at the same target',
+  );
+}
+
+function isPromotionOverlapConstraintError(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2039') {
+    return false;
+  }
+
+  const adapterError = error.meta?.driverAdapterError;
+  if (typeof adapterError !== 'object' || adapterError === null || !('cause' in adapterError)) {
+    return false;
+  }
+
+  const cause = adapterError.cause;
+  if (typeof cause !== 'object' || cause === null || !('code' in cause) || !('message' in cause)) {
+    return false;
+  }
+
+  const message = cause.message;
+  if (cause.code !== '23P01' || typeof message !== 'string') {
+    return false;
+  }
+
+  return overlapConstraintNames.some((name) => message.includes(`exclusion constraint "${name}"`));
+}
+
+function isPrismaWriteConflict(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034';
 }

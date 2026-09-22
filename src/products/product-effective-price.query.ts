@@ -37,7 +37,7 @@ export function queryProductsByEffectivePrice({
   const sortDirection = order === 'desc' ? Prisma.sql`DESC` : Prisma.sql`ASC`;
 
   // Effective price must be calculated and sorted across the full filtered
-  // result set before pagination, which Prisma's model query API cannot express.
+  // result set before pagination
   return prisma.$queryRaw<EffectivePriceRow[]>`
     SELECT
       product."id",
