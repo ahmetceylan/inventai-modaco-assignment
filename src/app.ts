@@ -1,9 +1,9 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
+import { healthRouter } from './health/health.routes.js';
 import { HttpError, isMalformedJsonError } from './http/errors.js';
 import { productRouter } from './products/product.routes.js';
 import { promotionRouter } from './promotions/promotion.routes.js';
-import { healthRouter } from './routes/health.js';
 
 export const createApp = (): Express => {
   const app = express();
