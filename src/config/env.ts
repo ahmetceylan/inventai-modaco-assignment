@@ -71,11 +71,24 @@ const readRequiredString = (name: string, defaultValue: string): string => {
   return value;
 };
 
+const importRetryBaseDelaySeconds = readPositiveInteger('IMPORT_RETRY_BASE_DELAY_SECONDS', '5');
+const importRetryMaxDelaySeconds = readPositiveInteger('IMPORT_RETRY_MAX_DELAY_SECONDS', '300');
+
+if (importRetryMaxDelaySeconds < importRetryBaseDelaySeconds) {
+  throw new Error(
+    'Invalid IMPORT_RETRY_MAX_DELAY_SECONDS. Expected a value greater than or equal to IMPORT_RETRY_BASE_DELAY_SECONDS.',
+  );
+}
+
 export const env = {
   NODE_ENV: readNodeEnv(),
   PORT: readPort(),
   IMPORT_STORAGE_PATH: resolve(readRequiredString('IMPORT_STORAGE_PATH', './data/imports')),
   MAX_IMPORT_FILE_SIZE_BYTES: readPositiveInteger('MAX_IMPORT_FILE_SIZE_BYTES', '536870912'),
   IMPORT_CHUNK_SIZE: readBoundedPositiveInteger('IMPORT_CHUNK_SIZE', '500', 10_000),
+  IMPORT_MAX_ATTEMPTS: readPositiveInteger('IMPORT_MAX_ATTEMPTS', '3'),
+  IMPORT_RETRY_BASE_DELAY_SECONDS: importRetryBaseDelaySeconds,
+  IMPORT_RETRY_MAX_DELAY_SECONDS: importRetryMaxDelaySeconds,
+  IMPORT_LOCK_TIMEOUT_SECONDS: readPositiveInteger('IMPORT_LOCK_TIMEOUT_SECONDS', '300'),
   PRICING_RULE_VERSION: readRequiredString('PRICING_RULE_VERSION', 'v1'),
 } as const;

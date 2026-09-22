@@ -3,10 +3,12 @@ import type { Prisma } from '../generated/prisma/client.js';
 export interface ClaimedImportChunk {
   id: string;
   importJobId: string;
+  chunkNumber: number;
   storagePath: string;
   rowCount: number;
   pricingRuleVersion: string;
   workerId: string;
+  attemptCount: number;
 }
 
 export interface ValidProductRow {
@@ -49,5 +51,11 @@ export class ChunkProcessingError extends Error {
     readonly rowNumber: number | null = null,
   ) {
     super(message);
+  }
+}
+
+export class ChunkOwnershipLostError extends Error {
+  constructor(readonly chunk: ClaimedImportChunk) {
+    super('Import chunk ownership was lost');
   }
 }

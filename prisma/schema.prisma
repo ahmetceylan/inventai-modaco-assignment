@@ -115,6 +115,7 @@ model ImportChunk {
 
   @@unique([importJobId, chunkNumber])
   @@index([status, availableAt])
+  @@index([status, lockedAt])
 }
 
 model ImportFailure {

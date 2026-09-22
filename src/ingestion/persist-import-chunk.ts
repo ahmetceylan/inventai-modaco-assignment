@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from '../config/prisma.js';
 import { ImportChunkStatus, ImportJobStatus, Prisma } from '../generated/prisma/client.js';
+import { logImportChunkEvent } from './import-chunk-logger.js';
 import {
+  ChunkOwnershipLostError,
   ChunkProcessingError,
   type ClaimedImportChunk,
   type ParsedChunkRows,
@@ -9,6 +11,34 @@ import {
 } from './process-import-chunk.types.js';
 
 type Transaction = Prisma.TransactionClient;
+
+interface PersistenceResult {
+  jobStatus: ImportJobStatus | null;
+}
+
+const ownershipWhere = (chunk: ClaimedImportChunk) => {
+  return {
+    id: chunk.id,
+    status: ImportChunkStatus.PROCESSING,
+    lockedBy: chunk.workerId,
+    attemptCount: chunk.attemptCount,
+  } as const;
+};
+
+const requireChunkOwnership = async (
+  transaction: Transaction,
+  chunk: ClaimedImportChunk,
+  now: Date,
+): Promise<void> => {
+  const result = await transaction.importChunk.updateMany({
+    where: ownershipWhere(chunk),
+    data: { lockedAt: now },
+  });
+
+  if (result.count !== 1) {
+    throw new ChunkOwnershipLostError(chunk);
+  }
+};
 
 const lockProcessableImportJob = async (
   transaction: Transaction,
@@ -27,7 +57,7 @@ const lockProcessableImportJob = async (
 
   if (job.status !== ImportJobStatus.PROCESSING) {
     throw new ChunkProcessingError(
-      'CHUNK_PERSISTENCE_FAILED',
+      'IMPORT_JOB_NOT_PROCESSABLE',
       'Import job is no longer processable',
     );
   }
@@ -134,11 +164,7 @@ const completeChunk = async (
   completedAt: Date,
 ): Promise<void> => {
   const result = await transaction.importChunk.updateMany({
-    where: {
-      id: chunk.id,
-      status: ImportChunkStatus.PROCESSING,
-      lockedBy: chunk.workerId,
-    },
+    where: ownershipWhere(chunk),
     data: {
       status: ImportChunkStatus.COMPLETED,
       lockedAt: null,
@@ -149,10 +175,7 @@ const completeChunk = async (
   });
 
   if (result.count !== 1) {
-    throw new ChunkProcessingError(
-      'CHUNK_PERSISTENCE_FAILED',
-      'Import chunk claim is no longer valid',
-    );
+    throw new ChunkOwnershipLostError(chunk);
   }
 };
 
@@ -161,7 +184,7 @@ const updateImportJobProgress = async (
   chunk: ClaimedImportChunk,
   rows: ParsedChunkRows,
   completedAt: Date,
-): Promise<void> => {
+): Promise<ImportJobStatus | null> => {
   const job = await transaction.importJob.update({
     where: { id: chunk.importJobId },
     data: {
@@ -179,156 +202,68 @@ const updateImportJobProgress = async (
   });
 
   if (remainingChunks > 0) {
-    return;
+    return null;
   }
 
-  await transaction.importJob.update({
-    where: { id: chunk.importJobId },
-    data: {
-      status:
-        job.failedRows === 0 ? ImportJobStatus.COMPLETED : ImportJobStatus.COMPLETED_WITH_ERRORS,
-      completedAt,
+  const failedChunks = await transaction.importChunk.count({
+    where: {
+      importJobId: chunk.importJobId,
+      status: ImportChunkStatus.FAILED,
     },
   });
+  const status =
+    failedChunks > 0
+      ? ImportJobStatus.FAILED
+      : job.failedRows === 0
+        ? ImportJobStatus.COMPLETED
+        : ImportJobStatus.COMPLETED_WITH_ERRORS;
+  const updated = await transaction.importJob.updateMany({
+    where: {
+      id: chunk.importJobId,
+      status: ImportJobStatus.PROCESSING,
+    },
+    data: { status, completedAt },
+  });
+
+  return updated.count === 1 ? status : null;
 };
 
 export const persistProcessedChunk = async (
   chunk: ClaimedImportChunk,
   rows: ParsedChunkRows,
+  now: Date = new Date(),
 ): Promise<void> => {
-  await prisma.$transaction(
+  const result = await prisma.$transaction<PersistenceResult>(
     async (transaction) => {
+      await requireChunkOwnership(transaction, chunk, now);
       await lockProcessableImportJob(transaction, chunk.importJobId);
-      const categoryIds = await resolveCategoryIds(transaction, rows.validRows);
 
+      const categoryIds = await resolveCategoryIds(transaction, rows.validRows);
       await upsertProducts(transaction, rows.validRows, categoryIds);
       await saveInvalidRows(transaction, chunk, rows);
+      await completeChunk(transaction, chunk, now);
 
-      const completedAt = new Date();
-      await completeChunk(transaction, chunk, completedAt);
-      await updateImportJobProgress(transaction, chunk, rows, completedAt);
+      return {
+        jobStatus: await updateImportJobProgress(transaction, chunk, rows, now),
+      };
     },
     { timeout: 30_000 },
   );
-};
 
-export const markChunkFailed = async (
-  chunk: ClaimedImportChunk,
-  error: ChunkProcessingError,
-): Promise<void> => {
-  await prisma.$transaction(async (transaction) => {
-    await transaction.$queryRaw`
-      SELECT "id"
-      FROM "ImportJob"
-      WHERE "id" = ${chunk.importJobId}::uuid
-      FOR UPDATE
-    `;
-    const failedAt = new Date();
-
-    await transaction.importChunk.update({
-      where: { id: chunk.id },
-      data: {
-        status: ImportChunkStatus.FAILED,
-        lockedAt: null,
-        lockedBy: null,
-        lastError: error.message,
-        completedAt: failedAt,
-      },
-    });
-    await transaction.importFailure.create({
-      data: {
-        importJobId: chunk.importJobId,
-        importChunkId: chunk.id,
-        rowNumber: error.rowNumber,
-        errorCode: error.code,
-        errorMessage: error.message,
-      },
-    });
-    await transaction.importJob.update({
-      where: { id: chunk.importJobId },
-      data: {
-        status: ImportJobStatus.FAILED,
-        completedAt: failedAt,
-      },
-    });
+  logImportChunkEvent('chunk_completed', {
+    jobId: chunk.importJobId,
+    chunkId: chunk.id,
+    chunkNumber: chunk.chunkNumber,
+    attemptCount: chunk.attemptCount,
+    workerId: chunk.workerId,
   });
-};
 
-export const claimPendingImportChunk = async (
-  requestedJobId?: string,
-): Promise<ClaimedImportChunk | null> => {
-  const workerId = `local:${process.pid}:${randomUUID()}`;
-
-  return prisma.$transaction(async (transaction) => {
-    const requestedFilter =
-      requestedJobId === undefined
-        ? Prisma.empty
-        : Prisma.sql`AND chunk."importJobId" = ${requestedJobId}::uuid`;
-    const candidates = await transaction.$queryRaw<Array<{ id: string }>>`
-      SELECT chunk."id"
-      FROM "ImportChunk" AS chunk
-      INNER JOIN "ImportJob" AS job
-        ON job."id" = chunk."importJobId"
-      WHERE chunk."status" = 'PENDING'::"ImportChunkStatus"
-        AND chunk."availableAt" <= CURRENT_TIMESTAMP
-        AND job."status" IN ('READY'::"ImportJobStatus", 'PROCESSING'::"ImportJobStatus")
-        ${requestedFilter}
-      ORDER BY chunk."availableAt" ASC, chunk."chunkNumber" ASC, chunk."id" ASC
-      FOR UPDATE OF chunk SKIP LOCKED
-      LIMIT 1
-    `;
-    const candidate = candidates[0];
-
-    if (candidate === undefined) {
-      return null;
-    }
-
-    const chunk = await transaction.importChunk.findUniqueOrThrow({
-      where: { id: candidate.id },
-      select: {
-        id: true,
-        importJobId: true,
-        storagePath: true,
-        rowCount: true,
-        importJob: {
-          select: {
-            pricingRuleVersion: true,
-          },
-        },
-      },
-    });
-    const lockedAt = new Date();
-
-    await transaction.importChunk.update({
-      where: { id: chunk.id },
-      data: {
-        status: ImportChunkStatus.PROCESSING,
-        lockedAt,
-        lockedBy: workerId,
-        attemptCount: { increment: 1 },
-      },
-    });
-    const updatedJobs = await transaction.$executeRaw`
-      UPDATE "ImportJob"
-      SET
-        "status" = 'PROCESSING'::"ImportJobStatus",
-        "startedAt" = COALESCE("startedAt", CURRENT_TIMESTAMP),
-        "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = ${chunk.importJobId}::uuid
-        AND "status" IN ('READY'::"ImportJobStatus", 'PROCESSING'::"ImportJobStatus")
-    `;
-
-    if (updatedJobs !== 1) {
-      throw new ChunkProcessingError('CHUNK_CLAIM_FAILED', 'Import chunk could not be claimed');
-    }
-
-    return {
-      id: chunk.id,
-      importJobId: chunk.importJobId,
-      storagePath: chunk.storagePath,
-      rowCount: chunk.rowCount,
-      pricingRuleVersion: chunk.importJob.pricingRuleVersion,
-      workerId,
-    };
-  });
+  if (
+    result.jobStatus === ImportJobStatus.COMPLETED ||
+    result.jobStatus === ImportJobStatus.COMPLETED_WITH_ERRORS
+  ) {
+    logImportChunkEvent('job_completed', { jobId: chunk.importJobId });
+  } else if (result.jobStatus === ImportJobStatus.FAILED) {
+    logImportChunkEvent('job_failed', { jobId: chunk.importJobId });
+  }
 };
