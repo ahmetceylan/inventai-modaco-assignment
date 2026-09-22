@@ -105,6 +105,7 @@ describe('Import upload and status endpoints', () => {
       statusUrl: `/imports/${body.data.id}`,
     });
     expect(response.text).not.toContain('storagePath');
+    expect(response.text).not.toContain(storagePath);
     expect(jobs).toHaveLength(1);
 
     const job = jobs[0]!;
@@ -148,6 +149,18 @@ describe('Import upload and status endpoints', () => {
     expect(parseBody<ErrorJson>(response).error.code).toBe('UNSUPPORTED_IMPORT_FILE');
     await expect(prisma.importJob.count()).resolves.toBe(0);
     await expect(readdir(storagePath)).resolves.toEqual([]);
+  });
+
+  it('accepts a file at the configured maximum size', async () => {
+    const response = await request(app).post('/imports').attach('file', Buffer.alloc(65_536, 'a'), {
+      filename: 'max-size.csv',
+      contentType: 'text/csv',
+    });
+    const job = await prisma.importJob.findFirstOrThrow();
+
+    expect(response.status).toBe(202);
+    expect(response.text).not.toContain(storagePath);
+    await expect(readFile(join(storagePath, job.storagePath))).resolves.toHaveLength(65_536);
   });
 
   it('returns 413 and removes a file that exceeds the configured limit', async () => {
@@ -200,8 +213,30 @@ describe('Import upload and status endpoints', () => {
 
     expect(response.status).toBe(202);
     expect(job.originalFileName).toBe('outside.csv');
+    expect(job.storagePath).toMatch(/^[0-9a-f-]{36}\.csv$/);
     expect(join(storagePath, job.storagePath).startsWith(`${storagePath}/`)).toBe(true);
+    expect(response.text).not.toContain(storagePath);
     await expect(readdir(storagePath)).resolves.toEqual([job.storagePath]);
+  });
+
+  it.each([
+    ['/tmp/vendor/products.csv', 'products.csv', '/tmp/'],
+    ['C:\\Windows\\vendor\\products.csv', 'products.csv', 'C:\\'],
+  ])('treats %s as metadata only', async (filename, expectedName, leakedPrefix) => {
+    const response = await request(app).post('/imports').attach('file', Buffer.from('sku\n1\n'), {
+      filename,
+      contentType: 'text/csv',
+    });
+    const job = await prisma.importJob.findFirstOrThrow();
+
+    expect(response.status).toBe(202);
+    expect(job.originalFileName).toBe(expectedName);
+    expect(job.storagePath).toMatch(/^[0-9a-f-]{36}\.csv$/);
+    expect(job.storagePath).not.toContain('/');
+    expect(job.storagePath).not.toContain('\\');
+    expect(response.text).not.toContain(leakedPrefix);
+    expect(response.text).not.toContain(storagePath);
+    expect(join(storagePath, job.storagePath).startsWith(`${storagePath}/`)).toBe(true);
   });
 
   it('does not overwrite uploads with the same original filename', async () => {
