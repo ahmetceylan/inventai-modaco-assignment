@@ -1,0 +1,16 @@
+export const PERF_VENDOR_SKU_PREFIX = 'PERFV-';
+export const PERF_PRODUCT_SKU_PREFIX = 'PERFR-';
+export const PERF_CATEGORY_NAME = 'PERF_ACCESSORIES';
+export const PERF_PROMOTION_NAME = 'PERF_FLASH_SALE';
+export const PERF_VENDOR_CATEGORY_PREFIX = 'PERF_CAT_';
+export const PERF_VENDOR_CATEGORY_COUNT = 8;
+
+export const DEFAULT_VENDOR_ROWS = 500_000;
+export const DEFAULT_FLASH_SALE_PRODUCTS = 50_000;
+export const DEFAULT_VENDOR_OUTPUT = './tmp/perf/vendor-500k.csv';
+export const MAX_VENDOR_ROWS = 2_000_000;
+export const MAX_FLASH_SALE_PRODUCTS = 200_000;
+export const MAX_INGESTION_CONCURRENCY = 4;
+export const MAX_READ_CONCURRENCY = 50;
+export const MAX_READ_DURATION_SECONDS = 120;
+export const PRODUCT_SEED_BATCH_SIZE = 1_000;

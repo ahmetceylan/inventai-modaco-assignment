@@ -17,6 +17,10 @@
     "test": "vitest run",
     "ingestion:prepare": "tsx src/ingestion/prepare-import.command.ts",
     "ingestion:process": "tsx src/ingestion/process-import-chunk.command.ts",
+    "perf:generate-vendor": "tsx src/perf/generate-vendor.command.ts",
+    "perf:ingestion": "tsx src/perf/ingestion.command.ts",
+    "perf:seed-flash-sale": "tsx src/perf/seed-flash-sale.command.ts",
+    "perf:read": "tsx src/perf/read.command.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy"

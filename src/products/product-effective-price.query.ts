@@ -23,13 +23,10 @@ export interface EffectivePriceQuery {
   limit: number;
 }
 
-export const queryProductsByEffectivePrice = ({
-  categoryId,
-  order,
-  evaluationTime,
-  offset,
-  limit,
-}: EffectivePriceQuery): Prisma.PrismaPromise<EffectivePriceRow[]> => {
+const effectivePriceSql = <T>(
+  prefix: Prisma.Sql,
+  { categoryId, order, evaluationTime, offset, limit }: EffectivePriceQuery,
+): Prisma.PrismaPromise<T[]> => {
   const categoryFilter =
     categoryId === undefined
       ? Prisma.empty
@@ -38,7 +35,8 @@ export const queryProductsByEffectivePrice = ({
 
   // Effective price must be calculated and sorted across the full filtered
   // result set before pagination
-  return prisma.$queryRaw<EffectivePriceRow[]>`
+  return prisma.$queryRaw<T[]>`
+    ${prefix}
     SELECT
       product."id",
       product."name",
@@ -103,6 +101,21 @@ export const queryProductsByEffectivePrice = ({
     OFFSET ${offset}
     LIMIT ${limit}
   `;
+};
+
+export const queryProductsByEffectivePrice = (
+  query: EffectivePriceQuery,
+): Prisma.PrismaPromise<EffectivePriceRow[]> => {
+  return effectivePriceSql<EffectivePriceRow>(Prisma.empty, query);
+};
+
+export const explainProductsByEffectivePrice = (
+  query: EffectivePriceQuery,
+): Prisma.PrismaPromise<Array<{ 'QUERY PLAN': string }>> => {
+  return effectivePriceSql<{ 'QUERY PLAN': string }>(
+    Prisma.sql`EXPLAIN (ANALYZE, BUFFERS)`,
+    query,
+  );
 };
 
 export const mapEffectivePriceRows = (rows: EffectivePriceRow[]): PricedProductRecord[] => {

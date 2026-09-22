@@ -4,5 +4,6 @@ coverage
 generated
 .env
 data/imports/
+tmp/
 *.log
 .DS_Store
