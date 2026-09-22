@@ -15,6 +15,7 @@
     "lint": "eslint . --max-warnings 0",
     "format": "prettier --write .",
     "test": "vitest run",
+    "ingestion:prepare": "tsx src/ingestion/prepare-import.command.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy"
@@ -22,6 +23,7 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
+    "csv-parse": "^7.0.2",
     "dotenv": "^18.0.1",
     "express": "^5.2.1",
     "helmet": "^8.3.0",

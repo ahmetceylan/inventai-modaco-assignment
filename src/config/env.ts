@@ -47,6 +47,20 @@ const readPositiveInteger = (name: string, defaultValue: string): number => {
   return value;
 };
 
+const readBoundedPositiveInteger = (
+  name: string,
+  defaultValue: string,
+  maximum: number,
+): number => {
+  const value = readPositiveInteger(name, defaultValue);
+
+  if (value > maximum) {
+    throw new Error(`Invalid ${name} "${value}". Expected a value no greater than ${maximum}.`);
+  }
+
+  return value;
+};
+
 const readRequiredString = (name: string, defaultValue: string): string => {
   const value = (process.env[name] ?? defaultValue).trim();
 
@@ -62,5 +76,6 @@ export const env = {
   PORT: readPort(),
   IMPORT_STORAGE_PATH: resolve(readRequiredString('IMPORT_STORAGE_PATH', './data/imports')),
   MAX_IMPORT_FILE_SIZE_BYTES: readPositiveInteger('MAX_IMPORT_FILE_SIZE_BYTES', '536870912'),
+  IMPORT_CHUNK_SIZE: readBoundedPositiveInteger('IMPORT_CHUNK_SIZE', '500', 10_000),
   PRICING_RULE_VERSION: readRequiredString('PRICING_RULE_VERSION', 'v1'),
 } as const;
