@@ -1,6 +1,7 @@
 import request from 'supertest';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
+import { productCacheInvalidator } from '../src/cache/product-cache-invalidation.js';
 import { prisma } from '../src/config/prisma.js';
 import { DiscountType } from '../src/generated/prisma/client.js';
 
@@ -138,6 +139,7 @@ describe('GET /products effective-price sorting', () => {
 
   beforeEach(async () => {
     vi.spyOn(Date, 'now').mockReturnValue(evaluationTime.getTime());
+    await productCacheInvalidator.invalidateListings(Object.values(categoryIds));
     await clearDatabase();
     await seedProducts();
   });

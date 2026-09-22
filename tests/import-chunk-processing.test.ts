@@ -486,7 +486,17 @@ describe('Prepared Product chunk processing', () => {
     await expect(prisma.product.count({ where: { sku: 'SKU-1' } })).resolves.toBe(1);
   });
 
-  it('invalidates affected Product versions only after the chunk transaction commits', async () => {
+  it('invalidates Product, global, old Category, and new Category scopes after commit', async () => {
+    const oldCategory = await prisma.category.create({ data: { name: 'Cache old category' } });
+    await prisma.product.create({
+      data: {
+        sku: 'CACHE-SKU-1',
+        name: 'Existing cache Product',
+        categoryId: oldCategory.id,
+        basePrice: '10.00',
+        stockQuantity: 1,
+      },
+    });
     const job = await createJob({ totalRows: 2 });
     const chunk = await createChunk(job.id, 0, [
       validRow(2, { sku: 'CACHE-SKU-1' }),
@@ -497,8 +507,16 @@ describe('Prepared Product chunk processing', () => {
     const invalidator: ProductCacheInvalidator = {
       invalidateProduct: vi.fn(() => Promise.resolve()),
       invalidateCategory: vi.fn(() => Promise.resolve()),
-      invalidateProducts: vi.fn(async (productIds) => {
+      invalidateProducts: vi.fn(() => Promise.resolve()),
+      invalidateListings: vi.fn(() => Promise.resolve()),
+      invalidateIngestion: vi.fn(async (productIds: string[], categoryIds: string[]) => {
         expect(productIds).toHaveLength(2);
+        const newCategory = await prisma.category.findUniqueOrThrow({
+          where: { name: 'Accessories' },
+        });
+        expect(new Set(categoryIds)).toEqual(
+          new Set([oldCategory.id, newCategory.id]),
+        );
         await expect(
           prisma.importChunk.findUniqueOrThrow({ where: { id: chunk.id } }),
         ).resolves.toMatchObject({ status: ImportChunkStatus.COMPLETED });
@@ -507,7 +525,7 @@ describe('Prepared Product chunk processing', () => {
 
     await persistence.persistProcessedChunk(claimed!, rows, new Date(), invalidator);
 
-    expect(invalidator.invalidateProducts).toHaveBeenCalledTimes(1);
+    expect(invalidator.invalidateIngestion).toHaveBeenCalledTimes(1);
     expect(invalidator.invalidateProduct).not.toHaveBeenCalled();
   });
 
@@ -519,7 +537,9 @@ describe('Prepared Product chunk processing', () => {
     const invalidator: ProductCacheInvalidator = {
       invalidateProduct: vi.fn(() => Promise.resolve()),
       invalidateCategory: vi.fn(() => Promise.resolve()),
-      invalidateProducts: vi.fn(() => Promise.reject(new Error('Redis unavailable'))),
+      invalidateProducts: vi.fn(() => Promise.resolve()),
+      invalidateListings: vi.fn(() => Promise.resolve()),
+      invalidateIngestion: vi.fn(() => Promise.reject(new Error('Redis unavailable'))),
     };
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
 

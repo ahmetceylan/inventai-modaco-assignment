@@ -1,6 +1,7 @@
 import request from 'supertest';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
+import { productCacheInvalidator } from '../src/cache/product-cache-invalidation.js';
 import {
   categoryPromotionVersionKey,
   productDetailCacheKey,
@@ -136,6 +137,7 @@ describe('Product read endpoints', () => {
   const app = createApp();
 
   beforeEach(async () => {
+    await productCacheInvalidator.invalidateListings(Object.values(categoryIds));
     await runRedisOperation((client) =>
       client.del([
         ...Object.values(productIds).flatMap((id) => [

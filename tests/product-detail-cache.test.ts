@@ -55,6 +55,7 @@ class TestCacheStore implements ProductCacheStore {
     this.values.set(write.cacheKey, write.payload);
     return Promise.resolve(true);
   });
+  setIfVersionMatches = vi.fn(() => Promise.resolve(false));
 }
 
 const cachedEnvelope = (

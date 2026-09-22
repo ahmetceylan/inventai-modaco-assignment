@@ -16,6 +16,8 @@ const createInvalidator = (): ProductCacheInvalidator => {
     invalidateProduct: vi.fn(() => Promise.resolve()),
     invalidateCategory: vi.fn(() => Promise.resolve()),
     invalidateProducts: vi.fn(() => Promise.resolve()),
+    invalidateListings: vi.fn(() => Promise.resolve()),
+    invalidateIngestion: vi.fn(() => Promise.resolve()),
   };
 };
 
@@ -57,7 +59,7 @@ describe('Promotion cache invalidation', () => {
     await prisma.$disconnect();
   });
 
-  it('increments only the Product version after Product assignment commits', async () => {
+  it('invalidates Product detail and global/Category listings after Product assignment', async () => {
     const promotion = await createUnassignedPromotion();
     const invalidator = createInvalidator();
 
@@ -65,9 +67,10 @@ describe('Promotion cache invalidation', () => {
 
     expect(invalidator.invalidateProduct).toHaveBeenCalledWith(productId);
     expect(invalidator.invalidateCategory).not.toHaveBeenCalled();
+    expect(invalidator.invalidateListings).toHaveBeenCalledWith([categoryId]);
   });
 
-  it('increments only the Category version after Category assignment commits', async () => {
+  it('invalidates Category detail and global/Category listings after Category assignment', async () => {
     const promotion = await createUnassignedPromotion();
     const invalidator = createInvalidator();
 
@@ -76,6 +79,7 @@ describe('Promotion cache invalidation', () => {
     expect(invalidator.invalidateCategory).toHaveBeenCalledWith(categoryId);
     expect(invalidator.invalidateProduct).not.toHaveBeenCalled();
     expect(invalidator.invalidateProducts).not.toHaveBeenCalled();
+    expect(invalidator.invalidateListings).toHaveBeenCalledWith([categoryId]);
   });
 
   it.each([
@@ -91,6 +95,8 @@ describe('Promotion cache invalidation', () => {
 
     expect(invalidator[method]).toHaveBeenCalledTimes(1);
     expect(invalidator[method]).toHaveBeenCalledWith(target.id);
+    expect(invalidator.invalidateListings).toHaveBeenCalledTimes(1);
+    expect(invalidator.invalidateListings).toHaveBeenCalledWith([categoryId]);
   });
 
   it('does not invalidate when creating an unassigned Promotion', async () => {
@@ -100,6 +106,7 @@ describe('Promotion cache invalidation', () => {
 
     expect(invalidator.invalidateProduct).not.toHaveBeenCalled();
     expect(invalidator.invalidateCategory).not.toHaveBeenCalled();
+    expect(invalidator.invalidateListings).not.toHaveBeenCalled();
   });
 
   it('does not fail assignment when Redis invalidation fails', async () => {
@@ -124,5 +131,18 @@ describe('Promotion cache invalidation', () => {
 
     expect(cancelled.categoryId).toBe(categoryId);
     expect(cancelled.cancelledAt).toBeInstanceOf(Date);
+  });
+
+  it('does not fail assignment when listing invalidation fails', async () => {
+    const promotion = await createUnassignedPromotion();
+    const invalidator = createInvalidator();
+    vi.mocked(invalidator.invalidateListings).mockRejectedValueOnce(
+      new Error('Redis unavailable'),
+    );
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(
+      assignPromotion(promotion.id, { type: 'CATEGORY', id: categoryId }, invalidator),
+    ).resolves.toMatchObject({ categoryId });
   });
 });
