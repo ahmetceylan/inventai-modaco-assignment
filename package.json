@@ -16,6 +16,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "ingestion:prepare": "tsx src/ingestion/prepare-import.command.ts",
+    "ingestion:process": "tsx src/ingestion/process-import-chunk.command.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy"
