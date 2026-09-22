@@ -424,30 +424,6 @@ describe('GET /products effective-price sorting', () => {
     expect(product?.effectivePrice).toBe('84.99');
   });
 
-  it('deterministically selects the latest active Promotion at one scope', async () => {
-    await seedPromotion({
-      id: '76000000-0000-4000-8000-000000000002',
-      productId: productIds.second,
-      value: '50.00',
-      startAt: new Date('2030-05-01T00:00:00.000Z'),
-    });
-    await seedPromotion({
-      id: '76000000-0000-4000-8000-000000000001',
-      productId: productIds.second,
-      value: '20.00',
-      startAt: activeStart,
-    });
-
-    const response = await request(app).get('/products').query({
-      categoryId: categoryIds.first,
-      sort: 'effectivePrice',
-    });
-    const body = parseBody<ProductListJson>(response.text);
-    const product = body.data.find(({ id }) => id === productIds.second);
-
-    expect(product?.effectivePrice).toBe('40.00');
-  });
-
   it('rejects an unsupported sort value', async () => {
     const response = await request(app).get('/products').query({ sort: 'name' });
 

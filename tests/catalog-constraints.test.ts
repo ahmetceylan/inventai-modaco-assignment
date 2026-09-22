@@ -97,6 +97,20 @@ describe('catalog check constraints', () => {
     expect(promotion.value.toString()).toBe('25');
   });
 
+  it('accepts a percentage promotion with value 100', async () => {
+    const promotion = await prisma.promotion.create({
+      data: {
+        name: 'Maximum percentage',
+        discountType: DiscountType.PERCENTAGE,
+        value: '100.00',
+        startAt,
+        endAt,
+      },
+    });
+
+    expect(promotion.value.toString()).toBe('100');
+  });
+
   it('rejects a percentage promotion above 100', async () => {
     const error = await prisma.promotion
       .create({
@@ -104,6 +118,38 @@ describe('catalog check constraints', () => {
           name: 'Invalid percentage',
           discountType: DiscountType.PERCENTAGE,
           value: '100.01',
+          startAt,
+          endAt,
+        },
+      })
+      .catch((caught: unknown) => caught);
+
+    expectCheckConstraint(error, 'promotion_valid_value');
+  });
+
+  it('rejects a percentage promotion with value zero', async () => {
+    const error = await prisma.promotion
+      .create({
+        data: {
+          name: 'Zero percentage',
+          discountType: DiscountType.PERCENTAGE,
+          value: '0.00',
+          startAt,
+          endAt,
+        },
+      })
+      .catch((caught: unknown) => caught);
+
+    expectCheckConstraint(error, 'promotion_valid_value');
+  });
+
+  it('rejects a negative percentage promotion', async () => {
+    const error = await prisma.promotion
+      .create({
+        data: {
+          name: 'Negative percentage',
+          discountType: DiscountType.PERCENTAGE,
+          value: '-1.00',
           startAt,
           endAt,
         },
@@ -127,11 +173,29 @@ describe('catalog check constraints', () => {
     expect(promotion.value.toString()).toBe('5');
   });
 
-  it('rejects a zero or negative promotion value', async () => {
-    const zeroError = await prisma.promotion
+  it('accepts a fixed discount larger than a representative Product price', async () => {
+    const category = await createCategory();
+    const product = await createProduct(category.id, { basePrice: '10.00' });
+
+    const promotion = await prisma.promotion.create({
+      data: {
+        name: 'Large fixed discount',
+        discountType: DiscountType.FIXED,
+        value: '100.00',
+        startAt,
+        endAt,
+        productId: product.id,
+      },
+    });
+
+    expect(promotion.value.toString()).toBe('100');
+  });
+
+  it('rejects a fixed discount with value zero', async () => {
+    const error = await prisma.promotion
       .create({
         data: {
-          name: 'Zero value',
+          name: 'Zero fixed discount',
           discountType: DiscountType.FIXED,
           value: '0.00',
           startAt,
@@ -140,11 +204,15 @@ describe('catalog check constraints', () => {
       })
       .catch((caught: unknown) => caught);
 
-    const negativeError = await prisma.promotion
+    expectCheckConstraint(error, 'promotion_valid_value');
+  });
+
+  it('rejects a negative fixed discount', async () => {
+    const error = await prisma.promotion
       .create({
         data: {
-          name: 'Negative value',
-          discountType: DiscountType.PERCENTAGE,
+          name: 'Negative fixed discount',
+          discountType: DiscountType.FIXED,
           value: '-1.00',
           startAt,
           endAt,
@@ -152,11 +220,25 @@ describe('catalog check constraints', () => {
       })
       .catch((caught: unknown) => caught);
 
-    expectCheckConstraint(zeroError, 'promotion_valid_value');
-    expectCheckConstraint(negativeError, 'promotion_valid_value');
+    expectCheckConstraint(error, 'promotion_valid_value');
   });
 
-  it('rejects a promotion whose endAt is not later than startAt', async () => {
+  it('accepts a promotion whose startAt is before endAt', async () => {
+    const promotion = await prisma.promotion.create({
+      data: {
+        name: 'Valid dates',
+        discountType: DiscountType.FIXED,
+        value: '5.00',
+        startAt,
+        endAt,
+      },
+    });
+
+    expect(promotion.startAt).toEqual(startAt);
+    expect(promotion.endAt).toEqual(endAt);
+  });
+
+  it('rejects a promotion whose startAt equals endAt', async () => {
     const error = await prisma.promotion
       .create({
         data: {
@@ -164,6 +246,22 @@ describe('catalog check constraints', () => {
           discountType: DiscountType.FIXED,
           value: '5.00',
           startAt,
+          endAt: startAt,
+        },
+      })
+      .catch((caught: unknown) => caught);
+
+    expectCheckConstraint(error, 'promotion_valid_dates');
+  });
+
+  it('rejects a promotion whose startAt is after endAt', async () => {
+    const error = await prisma.promotion
+      .create({
+        data: {
+          name: 'Reversed dates',
+          discountType: DiscountType.FIXED,
+          value: '5.00',
+          startAt: endAt,
           endAt: startAt,
         },
       })

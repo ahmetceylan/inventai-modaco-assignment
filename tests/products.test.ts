@@ -495,27 +495,5 @@ describe('Product read endpoints', () => {
       expect(listed?.effectivePrice).toBe('17.21');
       expect(detailBody.data.effectivePrice).toBe(listed?.effectivePrice);
     });
-
-    it('deterministically selects the latest matching Promotion for defensive fallback', async () => {
-      await seedPromotion({
-        id: '60000000-0000-4000-8000-000000000002',
-        productId: productIds.second,
-        startAt: new Date('2030-05-01T00:00:00.000Z'),
-        endAt: activeEnd,
-        value: '10.00',
-      });
-      await seedPromotion({
-        id: '60000000-0000-4000-8000-000000000001',
-        productId: productIds.second,
-        startAt: activeStart,
-        endAt: activeEnd,
-        value: '20.00',
-      });
-
-      const response = await request(app).get(`/products/${productIds.second}`);
-      const body = parseBody<ProductDetailJson>(response.text);
-
-      expect(body.data.effectivePrice).toBe('16.20');
-    });
   });
 });

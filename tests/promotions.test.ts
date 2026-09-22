@@ -421,6 +421,48 @@ describe('Promotion management endpoints', () => {
       expect(parseBody<ErrorJson>(response).error.code).toBe('PROMOTION_CONFLICT');
     });
 
+    it.each([
+      ['Product', { productId: productIds.first }, { productId: productIds.first }],
+      ['Category', { categoryId: categoryIds.first }, { categoryId: categoryIds.first }],
+    ] as const)(
+      'returns one 409 PROMOTION_CONFLICT for concurrent overlapping %s assignments',
+      async (_scope, targetBody, assignedWhere) => {
+        const first = await createPromotion({
+          startAt: '2040-01-01T00:00:00.000Z',
+          endAt: '2040-02-01T00:00:00.000Z',
+        });
+        const second = await createPromotion({
+          startAt: '2040-01-15T00:00:00.000Z',
+          endAt: '2040-02-15T00:00:00.000Z',
+        });
+
+        const responses = await Promise.all([
+          request(app).post(`/promotions/${first.id}/assign`).send(targetBody),
+          request(app).post(`/promotions/${second.id}/assign`).send(targetBody),
+        ]);
+        const success = responses.filter((response) => response.status === 200);
+        const conflicts = responses.filter((response) => response.status === 409);
+
+        expect(success).toHaveLength(1);
+        expect(conflicts).toHaveLength(1);
+        expect(parseBody<ErrorJson>(conflicts[0]!).error).toEqual({
+          code: 'PROMOTION_CONFLICT',
+          message: 'Promotion overlaps another promotion at the same target',
+          details: [],
+        });
+
+        const assigned = await prisma.promotion.count({
+          where: {
+            ...assignedWhere,
+            cancelledAt: null,
+            startAt: { lt: new Date('2040-02-15T00:00:00.000Z') },
+            endAt: { gt: new Date('2040-01-01T00:00:00.000Z') },
+          },
+        });
+        expect(assigned).toBe(1);
+      },
+    );
+
     it('allows adjacent ranges under half-open interval semantics', async () => {
       const existing = await createPromotion({
         startAt: '2030-05-01T00:00:00.000Z',
