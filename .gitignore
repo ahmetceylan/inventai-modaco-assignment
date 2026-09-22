@@ -3,5 +3,6 @@ dist
 coverage
 generated
 .env
+data/imports/
 *.log
 .DS_Store

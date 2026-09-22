@@ -2,6 +2,7 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import helmet from 'helmet';
 import { healthRouter } from './health/health.routes.js';
 import { HttpError, isMalformedJsonError } from './http/errors.js';
+import { importRouter } from './ingestion/import.routes.js';
 import { productRouter } from './products/product.routes.js';
 import { promotionRouter } from './promotions/promotion.routes.js';
 
@@ -11,6 +12,7 @@ export const createApp = (): Express => {
   app.use(helmet());
   app.use(express.json({ limit: '100kb' }));
   app.use(healthRouter);
+  app.use(importRouter);
   app.use(productRouter);
   app.use(promotionRouter);
 
